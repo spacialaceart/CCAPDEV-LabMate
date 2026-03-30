@@ -1,13 +1,16 @@
-CCAPDEV - S16 (Capote, Gonzales, Ho, Rocha)
+# CSSECDV App Demo
 
-Access the deployed website on https://ccapdev-group11-mco.onrender.com
+Taken from CCAPDEV - Capote
+
+# Pre-requisites
+
+1. Must have [https://www.docker.com/get-started/](Docker).
 
 # How to Run the Application
 
 To start the application, follow the steps:
 1. Run `npm install` in the root directory of the project.
-2. Run `npm run dev` for development (auto-reload) or `npm start` for normal startup.
-3. As an alternative one-command setup, run `npm run demo` to install dependencies and start the app.
+2. Make a copy of .sample.env to .env
 
 The app runs on [http://localhost:3000/](http://localhost:3000/).
 

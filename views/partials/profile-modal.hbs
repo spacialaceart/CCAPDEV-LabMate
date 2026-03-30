@@ -1,0 +1,26 @@
+<div id="profile-modal-overlay" class="profile-modal-overlay" hidden></div>
+
+<div id="profile-modal" class="profile-modal" role="dialog" aria-modal="true" aria-labelledby="profile-modal-name" hidden>
+    <button type="button" class="profile-modal-close" data-profile-modal-close aria-label="Close profile modal">&times;</button>
+
+    <div class="profile-modal-header">
+        <img id="profile-modal-image" class="profile-modal-image" src="/img/default-profile.png" alt="Profile Image">
+        <div class="profile-modal-identity">
+            <h2 id="profile-modal-name" class="profile-modal-name"></h2>
+            <p id="profile-modal-type" class="profile-modal-type"></p>
+        </div>
+    </div>
+
+    <div class="profile-modal-content">
+        <span class="profile-modal-label">Email</span>
+        <div id="profile-modal-email" class="profile-modal-value"></div>
+
+        <span class="profile-modal-label">Department</span>
+        <div id="profile-modal-department" class="profile-modal-value"></div>
+
+        <div class="profile-modal-bio">
+            <span class="profile-modal-label">Biography</span>
+            <div id="profile-modal-biography" class="profile-modal-value"></div>
+        </div>
+    </div>
+</div>

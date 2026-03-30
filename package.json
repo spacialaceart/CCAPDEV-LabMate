@@ -1,5 +1,5 @@
 {
-  "name": "ccapdev-s16",
+  "name": "cssecdv-s33",
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
@@ -11,15 +11,15 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/anjagnz/CCAPDEV-S16.git"
+    "url": "git+https://github.com/leafygrass/CCAPDEV-LabMate.git"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/anjagnz/CCAPDEV-S16/issues"
+    "url": "https://github.com/leafygrass/CCAPDEV-LabMate/issues"
   },
-  "homepage": "https://github.com/anjagnz/CCAPDEV-S16#readme",
+  "homepage": "https://github.com/leafygrass/CCAPDEV-LabMate#readme",
   "description": "CCAPDEV - S16 (Capote, Gonzales Ho, Rocha)",
     "dependencies": {
     "argon2": "^0.43.1",

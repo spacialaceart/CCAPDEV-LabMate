@@ -13,7 +13,36 @@ const dbUri = 'mongodb://localhost/LabMateDB';
 const User = require('./database/models/User');
 const Reservation = require('./database/models/Reservation');
 const Laboratory = require("./database/models/Laboratory");
-const { timeSlots, endTimeOptions, morningTimeSlots } = require('./database/models/TimeSlotOptions');
+const { timeSlots } = require('./database/models/TimeSlotOptions');
+
+const REMEMBER_ME_DURATION_MS = 3 * 7 * 24 * 60 * 60 * 1000;
+const SESSION_COOKIE_NAME = "connect.sid";
+const RESERVATION_DATE_FORMAT_OPTIONS = {
+    timeZone: "Asia/Singapore",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+};
+const PROFILE_DATE_FORMAT_OPTIONS = {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+};
+const LAB_DATE_FORMAT_OPTIONS = {
+    weekday: "long",
+    month: "long",
+    day: "numeric"
+};
+const PROFILE_SECTION_HASHES = {
+    dashboard: "#dashboard",
+    overview: "#dashboard",
+    view: "#view",
+    account: "#view",
+    edit: "#edit",
+    delete: "#delete",
+    logout: "#logout"
+};
+const DEFAULT_UPCOMING_LAB_MESSAGE = "No upcoming reservations.";
 
 // Configure middleware
 const app = express();
@@ -116,6 +145,328 @@ app.use(async (req, res, next) => {
     next();
 });
 
+function redirectToUserHome(res, userType) {
+    return res.redirect(userType === "Faculty" ? "/labtech-home" : "/student-home");
+}
+
+function destroySession(req, res, onComplete) {
+    req.session.destroy(() => {
+        res.clearCookie(SESSION_COOKIE_NAME);
+        onComplete();
+    });
+}
+
+async function refreshSessionUser(req) {
+    const user = await User.findById(req.session.user._id);
+
+    if (!user) {
+        return null;
+    }
+
+    req.session.user = user.toObject();
+    return user;
+}
+
+function createGuestOnlyPageHandler(viewName) {
+    return (req, res) => {
+        if (req.session.user) {
+            return redirectToUserHome(res, req.session.user.type);
+        }
+
+        res.render(viewName);
+    };
+}
+
+function buildNext7Days() {
+    const today = new Date();
+
+    return Array.from({ length: 8 }, (_, offset) => {
+        const date = new Date();
+        date.setDate(today.getDate() + offset);
+
+        return {
+            formattedDate: date.toISOString().split("T")[0],
+            displayDate: date.toLocaleDateString("en-US", LAB_DATE_FORMAT_OPTIONS)
+        };
+    });
+}
+
+async function getLaboratoryPageData(userFields) {
+    const [labs, reservations] = await Promise.all([
+        Laboratory.find({}).lean(),
+        Reservation.find().lean().populate("userId", userFields)
+    ]);
+
+    return {
+        labs,
+        next7Days: buildNext7Days(),
+        timeSlots,
+        reservations
+    };
+}
+
+function sortReservationsBySchedule(reservations) {
+    return reservations.sort((a, b) => {
+        const dateComparison = new Date(a.reservationDate) - new Date(b.reservationDate);
+        if (dateComparison !== 0) return dateComparison;
+
+        const startTimeComparison = convertTimeToMinutes(a.startTime) - convertTimeToMinutes(b.startTime);
+        if (startTimeComparison !== 0) return startTimeComparison;
+
+        return convertTimeToMinutes(a.endTime) - convertTimeToMinutes(b.endTime);
+    });
+}
+
+async function getSortedReservations(query = {}, select) {
+    let reservationQuery = Reservation.find(query);
+
+    if (select) {
+        reservationQuery = reservationQuery.select(select);
+    }
+
+    return sortReservationsBySchedule(await reservationQuery.lean());
+}
+
+function formatReservationDate(reservationDate) {
+    return new Date(reservationDate).toLocaleDateString("en-US", RESERVATION_DATE_FORMAT_OPTIONS);
+}
+
+function formatReservationsForList(reservations) {
+    return reservations.map((reservation) => ({
+        ...reservation,
+        reservationDate: formatReservationDate(reservation.reservationDate)
+    }));
+}
+
+function getReservationDateTime(reservationDate, timeString) {
+    const reservationDateTime = new Date(reservationDate);
+    const reservationTime = convertTo24Hour(timeString);
+
+    if (!reservationTime) {
+        return null;
+    }
+
+    reservationDateTime.setHours(reservationTime.hours, reservationTime.minutes, 0, 0);
+    return reservationDateTime;
+}
+
+function getRemovableReservationIds(reservations) {
+    const currentDate = new Date();
+
+    return reservations.reduce((removableReservations, reservation) => {
+        const reservationDateTime = getReservationDateTime(reservation.reservationDate, reservation.startTime);
+
+        if (!reservationDateTime) {
+            return removableReservations;
+        }
+
+        const timeDiff = (currentDate - reservationDateTime) / (1000 * 60);
+        const currentDateGMT8 = currentDate.toLocaleDateString("en-US", RESERVATION_DATE_FORMAT_OPTIONS);
+
+        console.log(`Time Diff: ${timeDiff} Reservation Date: ${reservationDateTime} Current Date: ${currentDate}Date (GMT+8): ${currentDateGMT8}`);
+
+        if (timeDiff >= 10) {
+            removableReservations.push(reservation._id);
+        }
+
+        return removableReservations;
+    }, []);
+}
+
+function formatProfileReservation(reservation) {
+    return {
+        lab: reservation.laboratoryRoom,
+        date: new Date(reservation.reservationDate).toLocaleDateString("en-US", PROFILE_DATE_FORMAT_OPTIONS),
+        time: `${reservation.startTime} - ${reservation.endTime}`,
+        seat: reservation.seatNumber,
+        status: getStatus(reservation)
+    };
+}
+
+function getUpcomingLabSummary(reservations) {
+    const now = new Date();
+
+    const upcomingReservations = reservations
+        .filter((reservation) => {
+            const reservationDateTime = getReservationDateTime(reservation.reservationDate, reservation.startTime);
+            return reservationDateTime && reservationDateTime > now;
+        })
+        .sort((one, two) => (
+            getReservationDateTime(one.reservationDate, one.startTime) -
+            getReservationDateTime(two.reservationDate, two.startTime)
+        ));
+
+    if (upcomingReservations.length === 0) {
+        return DEFAULT_UPCOMING_LAB_MESSAGE;
+    }
+
+    const nextReservation = upcomingReservations[0];
+    return `${nextReservation.laboratoryRoom} on ${new Date(nextReservation.reservationDate).toLocaleDateString("en-US", PROFILE_DATE_FORMAT_OPTIONS)} at ${nextReservation.startTime}`;
+}
+
+function getProfileSectionHash(section) {
+    return PROFILE_SECTION_HASHES[section] || "";
+}
+
+function normalizeReservationDate(date) {
+    const reservationDate = new Date(date);
+    reservationDate.setDate(reservationDate.getDate() - 1);
+    reservationDate.setHours(24, 0, 0, 0);
+    return reservationDate;
+}
+
+async function renderHomePage(req, res, viewName) {
+    const user = await refreshSessionUser(req);
+
+    if (!user) {
+        console.log("User no longer exists in database. Destroying session...");
+        return destroySession(req, res, () => res.redirect("/signin-page"));
+    }
+
+    res.render(viewName, { user: req.session.user });
+}
+
+async function renderLaboratoryPage(req, res, viewName, userFields, includeUser = false) {
+    try {
+        const pageData = await getLaboratoryPageData(userFields);
+        const viewModel = includeUser
+            ? { ...pageData, user: req.session.user }
+            : pageData;
+
+        res.render(viewName, viewModel);
+    } catch (error) {
+        console.error("Error fetching laboratories:", error);
+        res.status(500).send("Internal Server Error");
+    }
+}
+
+async function renderReservationsPage(req, res, viewName, query, includeRemovableReservations = false) {
+    try {
+        const reservations = formatReservationsForList(await getSortedReservations(query));
+        const viewModel = {
+            reservations,
+            user: req.session.user
+        };
+
+        if (includeRemovableReservations) {
+            viewModel.removableReservations = getRemovableReservationIds(reservations);
+        }
+
+        res.render(viewName, viewModel);
+    } catch (error) {
+        console.error("Error fetching reservations:", error);
+        res.status(500).send("Internal Server Error");
+    }
+}
+
+async function renderProfilePage(req, res, viewName, reservationQuery) {
+    const reservations = await getSortedReservations(
+        reservationQuery,
+        "laboratoryRoom reservationDate startTime endTime seatNumber"
+    );
+
+    res.render(viewName, {
+        upcomingLab: getUpcomingLabSummary(reservations),
+        reservations: reservations.map(formatProfileReservation),
+        user: req.session.user
+    });
+}
+
+async function createReservationAndRedirect(req, res, redirectPath, options = {}) {
+    const { includeAnonymous = false } = options;
+    const { labId, date, seatNumber, startTime, endTime, userId, isAnonymous } = req.body;
+    const parsedSeatNumber = parseInt(seatNumber, 10);
+
+    if (!labId || !date || !seatNumber || !startTime || !endTime || !userId) {
+        return res.status(400).send("All fields are required");
+    }
+
+    console.log("Creating reservation with data:", req.body);
+
+    const reservationDate = normalizeReservationDate(date);
+    const lab = await Laboratory.findById(labId);
+
+    if (!lab) {
+        return res.status(404).send("Laboratory not found");
+    }
+
+    const existingReservation = await Reservation.findOne({
+        laboratoryRoom: lab.room,
+        seatNumber: parsedSeatNumber,
+        reservationDate,
+        startTime
+    });
+
+    if (existingReservation) {
+        return res.status(400).send("This seat is already reserved for the selected time");
+    }
+
+    const user = await User.findById(userId);
+
+    if (!user) {
+        return res.status(404).send("User not found");
+    }
+
+    const reservationPayload = {
+        userId,
+        studentName: `${user.firstName} ${user.lastName}`,
+        laboratoryRoom: lab.room,
+        seatNumber: parsedSeatNumber,
+        bookingDate: new Date(),
+        reservationDate,
+        startTime,
+        endTime
+    };
+
+    if (includeAnonymous) {
+        reservationPayload.isAnonymous = isAnonymous;
+    }
+
+    await new Reservation(reservationPayload).save();
+    res.redirect(redirectPath);
+}
+
+function createProfileSectionRedirectHandler(profilePath) {
+    return (req, res) => {
+        res.redirect(`${profilePath}${getProfileSectionHash(req.params.section)}`);
+    };
+}
+
+async function findUserOrRespondNotFound(res, userId) {
+    const user = await User.findById(userId);
+
+    if (!user) {
+        console.log(`User not found with ID: ${userId}`);
+        res.status(404).json({ message: "User not found" });
+        return null;
+    }
+
+    return user;
+}
+
+function buildDetailedUserData(user) {
+    return {
+        _id: user._id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        department: user.department,
+        biography: user.biography,
+        image: user.image,
+        isLabTech: user.type === "Faculty"
+    };
+}
+
+function buildBasicUserData(user) {
+    return {
+        _id: user._id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        isLabTech: user.type === "Faculty"
+    };
+}
+
 // get session data (for temporary localstorage stuff)
 app.get("/api/session", (req, res) => {
     if (req.session && req.session.user) {
@@ -128,68 +479,32 @@ app.get("/api/session", (req, res) => {
 /* SIGNED-OUT ROUTES */
 
 app.get("/", async (req, res) => {
-    // Redirect user to their homepage, if exist
     if (req.session.user) {
-        
-        // Check if user still exists in database before redirecting
-        const user = await User.findById(req.session.user._id);
+        const user = await refreshSessionUser(req);
+
         if (!user) {
             console.log("User no longer exists in database. Destroying session...");
-            req.session.destroy(() => {
-                res.clearCookie("connect.sid");
-                res.render("index");
-            });
-            return;
+            return destroySession(req, res, () => res.render("index"));
         }
 
-        // extend user remember period
         if (req.session.cookie.maxAge) {
-            req.session.cookie.maxAge += 3 * 7 * 24 * 60 * 60 * 1000;
+            req.session.cookie.maxAge += REMEMBER_ME_DURATION_MS;
         }
 
-        // count visit (to check if remember period works)
         req.session.visitCount = (req.session.visitCount || 0) + 1;
 
-        // redirect to user homepage based on type
-        if (user.type === 'Faculty') {
-            res.redirect("/labtech-home");
-        } else {
-            res.redirect("/student-home");
-        }
-    } else {
-        res.render("index");
+        return redirectToUserHome(res, user.type);
     }
+
+    res.render("index");
 });
 
 app.get("/about", (req, res) => {
     res.render("about");
 });
 
-app.get("/signin-page", (req, res) => {
-    // Redirect user to homepage, if exist
-    if (req.session.user) {
-        if (req.session.user.type === 'Faculty') {
-            res.redirect("/labtech-home");
-        } else { 
-            res.redirect("/student-home");
-        }
-    } else {
-        res.render("signin-page");
-    }
-});
-
-app.get("/signup-page", (req, res) => {
-    // Redirect user to homepage, if exist
-    if (req.session.user) {
-        if (req.session.user.type === 'Faculty') {
-            res.redirect("/labtech-home");
-        } else { 
-            res.redirect("/student-home");
-        }
-    } else {
-        res.render("signup-page");
-    }
-});
+app.get("/signin-page", createGuestOnlyPageHandler("signin-page"));
+app.get("/signup-page", createGuestOnlyPageHandler("signup-page"));
 
 app.post("/signin", async (req, res) => {
     try {
@@ -234,22 +549,15 @@ app.post("/signin", async (req, res) => {
         // Store user data in session
         req.session.user = user.toObject();
 
-        // Set rememberMe period based on checkbox
         if (rememberMe) {
-            // set to 3 weeks
-            req.session.cookie.maxAge = 3 * 7 * 24 * 60 * 60 * 1000;
+            req.session.cookie.maxAge = REMEMBER_ME_DURATION_MS;
         }  else {
             req.session.cookie.expires = false;
         }
-        // handle visit count
+
         req.session.visitCount = 1;
 
-        // Redirect user based on their type
-        if (user.type === "Faculty") {
-            res.redirect("/labtech-home");
-        } else {
-            res.redirect("/student-home");
-        }
+        return redirectToUserHome(res, user.type);
         
     } catch (error) {
         console.error("Error during sign-in:", error.message, error.stack);
@@ -310,15 +618,9 @@ app.post("/signup", async (req, res) => {
         // Store user data in session
         req.session.user = newUser.toObject();
 
-        // handle visit count
         req.session.visitCount = 1;
 
-        // Redirect user based on their type
-        if (newUser.type === "Faculty") {
-            res.redirect("/labtech-home");
-        } else {
-            res.redirect("/student-home");
-        }
+        return redirectToUserHome(res, newUser.type);
         
     } catch (error) {
         console.error("Error during sign-up:", error);
@@ -327,237 +629,42 @@ app.post("/signup", async (req, res) => {
 });
 
 app.get("/signedout-laboratories", async (req, res) => {
-    try {
-        const labs = await Laboratory.find({}).lean();
-        const today = new Date();
-        const next7Days = [];
-        for(let i = 0; i <= 7; i++) {
-            const date = new Date();
-            date.setDate(today.getDate() + i);
-            next7Days.push({
-                formattedDate: date.toISOString().split('T')[0],
-                displayDate: date.toLocaleDateString('en-US', {weekday: 'long', month: 'long', day: 'numeric'})
-            });
-        }
-
-        // Get any existing reservations
-        const reservations = await Reservation.find().lean().populate('userId', 'firstName lastName isAnonymous type');
-
-        res.render('signedout-laboratories', { 
-            labs, 
-            next7Days, 
-            timeSlots,
-            reservations 
-        });
-    } catch (error) {
-        console.error('Error fetching laboratories:', error);
-        res.status(500).send('Internal Server Error');
-    }
+    await renderLaboratoryPage(req, res, "signedout-laboratories", "firstName lastName isAnonymous type");
 });
 
 /* SIGNED-IN ROUTES */
 
 // Homes
 
-app.get("/student-home", isAuth, verifyType, async (req, res) => {
-
-    // Refresh user data with database data
-    const user = await User.findById(req.session.user._id);
-    req.session.user = user.toObject(); 
-
-    // Check if user is authorized to access student home
-    res.render("student-home", {user: req.session.user});
-});
-
-app.get("/labtech-home", isAuth, verifyType, async (req, res) => {
-
-    // Refresh user data with database data
-    const user = await User.findById(req.session.user._id);
-    req.session.user = user.toObject();
-
-    // Check if user is authorized to access faculty home
-    res.render("labtech-home", {user: req.session.user});
+[
+    { path: "/student-home", view: "student/home" },
+    { path: "/labtech-home", view: "labtech/home" }
+].forEach(({ path, view }) => {
+    app.get(path, isAuth, verifyType, async (req, res) => {
+        await renderHomePage(req, res, view);
+    });
 });
 
 // Laboratories
 
-app.get("/student-laboratories", isAuth, verifyType, async (req, res) => {
-    try {
-        const labs = await Laboratory.find({}).lean();
-        const today = new Date();
-        const next7Days = [];
-        for(let i = 0; i <= 7; i++) {
-            const date = new Date();
-            date.setDate(today.getDate() + i);
-            next7Days.push({
-                formattedDate: date.toISOString().split('T')[0],
-                displayDate: date.toLocaleDateString('en-US', {weekday: 'long', month: 'long', day: 'numeric'})
-            });
-        }
-
-        // Get any existing reservations
-        const reservations = await Reservation.find().lean().populate('userId', 'firstName lastName type');
-
-        res.render('student-laboratories', { 
-            labs, 
-            next7Days, 
-            timeSlots,
-            reservations,
-            user: req.session.user
-        });
-    } catch (error) {
-        console.error('Error fetching laboratories:', error);
-        res.status(500).send('Internal Server Error');
-    }
-});
-
-app.get("/labtech-laboratories", isAuth, verifyType, async (req, res) => {
-    try {
-        const labs = await Laboratory.find({}).lean();
-        const today = new Date();
-        const next7Days = [];
-        for(let i = 0; i <= 7; i++) {
-            const date = new Date();
-            date.setDate(today.getDate() + i);
-            next7Days.push({
-                formattedDate: date.toISOString().split('T')[0],
-                displayDate: date.toLocaleDateString('en-US', {weekday: 'long', month: 'long', day: 'numeric'})
-            });
-        }
-
-        // Get any existing reservations
-        const reservations = await Reservation.find().lean().populate('userId', 'firstName lastName type');
-
-        res.render('labtech-laboratories', { 
-            labs, 
-            next7Days, 
-            timeSlots,
-            reservations,
-            user: req.session.user
-        });
-    } catch (error) {
-        console.error('Error fetching laboratories:', error);
-        res.status(500).send('Internal Server Error');
-    }
+[
+    { path: "/student-laboratories", view: "student/laboratories" },
+    { path: "/labtech-laboratories", view: "labtech/laboratories" }
+].forEach(({ path, view }) => {
+    app.get(path, isAuth, verifyType, async (req, res) => {
+        await renderLaboratoryPage(req, res, view, "firstName lastName type", true);
+    });
 });
 
 // Reservations
 
 app.get("/student-reservations", isAuth, verifyType, async (req, res) => {
-    try{
-        const reservations = await Reservation.find({userId : req.session.user._id}).lean();
-
-        reservations.sort((a, b) => {
-            // sort by reservation date
-            const dateComparison = new Date(a.reservationDate) - new Date(b.reservationDate);
-            if (dateComparison !== 0) return dateComparison;
-        
-            // then sort by start time
-            const startTimeComparison = convertTimeToMinutes(a.startTime) - convertTimeToMinutes(b.startTime);
-            if (startTimeComparison !== 0) return startTimeComparison;
-        
-            // then sort by end time
-            return convertTimeToMinutes(a.endTime) - convertTimeToMinutes(b.endTime);
-        });
-
-        // format reservation date
-        reservations.forEach(reservation=>{            
-            const formattedDate = new Date(reservation.reservationDate).toLocaleDateString("en-US", {
-                timeZone: "Asia/Singapore",
-                year: "numeric",
-                month: "2-digit",
-                day: "2-digit"
-            });
-
-            reservation.reservationDate = formattedDate;
-        })
-
-        res.render('student-reservations', {
-            reservations,
-            user: req.session.user
-        });
-    } catch (error){
-        console.error('Error fetching reservations:', error);
-        res.status(500).send('Internal Server Error');
-    }
+    await renderReservationsPage(req, res, "student/reservations", { userId: req.session.user._id });
 });
 
-app.get("/labtech-reservations", isAuth, verifyType, async(req, res) => {
-    try{
-        const reservations = await Reservation.find().lean();
-
-        reservations.sort((a, b) => {
-            // sort by reservation date
-            const dateComparison = new Date(a.reservationDate) - new Date(b.reservationDate);
-            if (dateComparison !== 0) return dateComparison;
-        
-            // then sort by start time
-            const startTimeComparison = convertTimeToMinutes(a.startTime) - convertTimeToMinutes(b.startTime);
-            if (startTimeComparison !== 0) return startTimeComparison;
-        
-            // then sort by end time
-            return convertTimeToMinutes(a.endTime) - convertTimeToMinutes(b.endTime);
-        });
-
-        // format reservation date
-        reservations.forEach(reservation=>{            
-            const formattedDate = new Date(reservation.reservationDate).toLocaleDateString("en-US", {
-                timeZone: "Asia/Singapore",
-                year: "numeric",
-                month: "2-digit",
-                day: "2-digit"
-            });
-
-            reservation.reservationDate = formattedDate;
-        })    
-
-        // get removable reservations
-        const removableReservations = [];
-        reservations.forEach(reservation => {
-            var reservationDate = reservation.reservationDate;
-            const currentDate = new Date(); 
-            const reservationDateTime = new Date(reservationDate);
-
-            const startTimeStr = reservation.startTime;
-            const [time, period] = startTimeStr.split(' ');
-            let [hours, minutes] = time.split(':').map(Number);
-
-            if (period === 'P.M.' && hours < 12) {
-                hours += 12;
-            } else if (period === 'A.M.' && hours === 12) {
-                hours = 0;
-            }
-
-            reservationDateTime.setHours(hours, minutes, 0, 0);
-
-            const timeDiff = (currentDate - reservationDateTime) / (1000 * 60);
-            const currentDateGMT8 = currentDate.toLocaleDateString("en-US", {
-                timeZone: "Asia/Singapore",
-                year: "numeric",
-                month: "2-digit",
-                day: "2-digit"
-            });;
-
-            const isWithin10Minutes = timeDiff >= 10;
-
-            console.log(`Time Diff: ${timeDiff} Reservation Date: ${reservationDateTime} Current Date: ${currentDate}Date (GMT+8): ${currentDateGMT8}`);
-
-            if(isWithin10Minutes) {
-                removableReservations.push(reservation._id);
-            }
-
-        });
-
-        res.render('labtech-reservations', {
-            reservations,
-            user: req.session.user,
-            removableReservations
-        });
-    } catch(error){
-        console.error('Error fetching reservations:', error);
-        res.status(500).send('Internal Server Error');
-    }
-})
+app.get("/labtech-reservations", isAuth, verifyType, async (req, res) => {
+    await renderReservationsPage(req, res, "labtech/reservations", {}, true);
+});
 
 
 // Get reservations across all users
@@ -600,36 +707,20 @@ app.get("/api/reservation/:id", async (req, res) => {
 
 app.get("/logout", (req, res) => {
     console.log("Destroying session and clearing remember me period...");
-    req.session.destroy(() => {
-        res.clearCookie("connect.sid");       
-        res.redirect("/");
-    });
+    destroySession(req, res, () => res.redirect("/"));
 });
 
 // Get detailed user information by ID (must be defined BEFORE the more general route)
 app.get("/api/user/details/:id", async (req, res) => {
     try {
         console.log(`Fetching detailed user info with ID: ${req.params.id}`);
-        
-        // Try to find the user in the User first
-        let user = await User.findById(req.params.id);
+        const user = await findUserOrRespondNotFound(res, req.params.id);
 
         if (!user) {
-            console.log(`User not found with ID: ${req.params.id}`);
-            return res.status(404).json({ message: "User not found" });
+            return;
         }
 
-        // Return detailed user data
-        const userDetails = {
-            _id: user._id,
-            firstName: user.firstName,
-            lastName: user.lastName,
-            email: user.email,
-            department: user.department,
-            biography: user.biography,
-            image: user.image,
-            isLabTech: user.type === "Faculty"
-        };
+        const userDetails = buildDetailedUserData(user);
         
         console.log(`Found detailed user info: ${JSON.stringify(userDetails)}`);
         res.json(userDetails);
@@ -643,23 +734,13 @@ app.get("/api/user/details/:id", async (req, res) => {
 app.get("/api/user/:id", async (req, res) => {
     try {
         console.log(`Fetching user with ID: ${req.params.id}`);
-        
-        // Try to find the user in the User first
-        let user = await User.findById(req.params.id);
-        
+        const user = await findUserOrRespondNotFound(res, req.params.id);
+
         if (!user) {
-            console.log(`User not found with ID: ${req.params.id}`);
-            return res.status(404).json({ message: "User not found" });
+            return;
         }
-        
-        // Return user data without sensitive information
-        const userData = {
-            _id: user._id,
-            firstName: user.firstName,
-            lastName: user.lastName,
-            email: user.email,
-            isLabTech: user.type === "Faculty"
-        };
+
+        const userData = buildBasicUserData(user);
         
         console.log(`Found user: ${JSON.stringify(userData)}`);
         res.json(userData);
@@ -758,21 +839,8 @@ async function deletePastReservations() {
         let deletionsOccurred = false;
 
         const pastReservations = reservations.filter(reservation => {
-            const reservationDate = new Date(reservation.reservationDate);
-            
-            const endTimeStr = reservation.endTime;
-            const [time, period] = endTimeStr.split(' ');
-            let [hours, minutes] = time.split(':').map(Number);
-            
-            if (period === 'P.M.' && hours < 12) {
-                hours += 12;
-            } else if (period === 'A.M.' && hours === 12) {
-                hours = 0;
-            }
-
-            reservationDate.setHours(hours, minutes, 0, 0);
-
-            return reservationDate <= currentDateTime;
+            const reservationDateTime = getReservationDateTime(reservation.reservationDate, reservation.endTime);
+            return reservationDateTime && reservationDateTime <= currentDateTime;
         })
 
         if (pastReservations.length > 0) {
@@ -839,208 +907,22 @@ app.patch("/api/reservation/:id", async(req,res) => {
     } catch (error){
         res.status(500).json({ message: "Server error", error });
     }
-})
-
-// Profile Pages
-app.get("/popup-profile", isAuth, (req, res) => {
-    res.render("popup-profile", { userData: null });
 });
 
 app.get("/student-profile", isAuth, async (req, res) => {
-
-    const user = req.session.user;
-    const reservations = await Reservation.find({userId: user._id})
-        .select('laboratoryRoom reservationDate startTime endTime seatNumber').lean();
-
-    reservations.sort((a, b) => {
-        // sort by reservation date
-        const dateComparison = new Date(a.reservationDate) - new Date(b.reservationDate);
-        if (dateComparison !== 0) return dateComparison;
-        
-        // then sort by start time
-        const startTimeComparison = convertTimeToMinutes(a.startTime) - convertTimeToMinutes(b.startTime);
-        if (startTimeComparison !== 0) return startTimeComparison;
-        
-        // then sort by end time
-        return convertTimeToMinutes(a.endTime) - convertTimeToMinutes(b.endTime);
-    });
-
-    const upcomingReservations = reservations
-        .filter(reservation => {
-            const now = new Date();
-            const reservationDateTime = new Date(reservation.reservationDate);
-
-            const reservationTime = convertTo24Hour(reservation.startTime);
-            if (!reservationTime) return false;
-
-            reservationDateTime.setHours(reservationTime.hours, reservationTime.minutes, 0, 0);
-
-            return reservationDateTime > now;
-        })
-        .sort((one, two) => {
-            const dateOne = new Date(one.reservationDate);
-            const dateTwo = new Date(two.reservationDate);
-
-            const timeOne = convertTo24Hour(one.startTime);
-            const timeTwo = convertTo24Hour(two.startTime);
-
-            dateOne.setHours(timeOne.hours, timeOne.minutes, 0, 0);
-            dateTwo.setHours(timeTwo.hours, timeTwo.minutes, 0, 0);
-
-            return dateOne - dateTwo;
-        })
-
-    let upcomingLab = "No upcoming reservations.";
-
-    if (upcomingReservations.length > 0) {
-        upcomingLab = `${upcomingReservations[0].laboratoryRoom} on ${new Date(upcomingReservations[0].reservationDate).toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' })} at ${upcomingReservations[0].startTime}`;
-    }
-    
-
-    // format data passed for display
-    const formattedReservations = reservations.map(reservation => {
-        return {
-            lab: reservation.laboratoryRoom,
-            date: reservation.reservationDate.toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }),
-            time: reservation.startTime + " - " + reservation.endTime,
-            seat: reservation.seatNumber,
-            status: getStatus(reservation)
-        };
-    });
-
-    // Render profile with data
-    res.render("student-profile", { upcomingLab, reservations: formattedReservations, user });
+    await renderProfilePage(req, res, "student/profile", { userId: req.session.user._id });
 });
 
 app.get("/labtech-profile", isAuth, async (req, res) => {
-    const reservations = await Reservation.find()
-        .select('laboratoryRoom reservationDate startTime endTime seatNumber')
-        .lean();
-
-    reservations.sort((a, b) => {
-        // sort by reservation date
-        const dateComparison = new Date(a.reservationDate) - new Date(b.reservationDate);
-        if (dateComparison !== 0) return dateComparison;
-        
-        // then sort by start time
-        const startTimeComparison = convertTimeToMinutes(a.startTime) - convertTimeToMinutes(b.startTime);
-        if (startTimeComparison !== 0) return startTimeComparison;
-        
-        // then sort by end time
-        return convertTimeToMinutes(a.endTime) - convertTimeToMinutes(b.endTime);
-    });
-
-    const user = req.session.user;
-
-    const upcomingReservations = reservations
-        .filter(reservation => {
-            const now = new Date();
-            const reservationDateTime = new Date(reservation.reservationDate);
-
-            const reservationTime = convertTo24Hour(reservation.startTime);
-            if(!reservationTime) return false;
-            
-            reservationDateTime.setHours(reservationTime.hours, reservationTime.minutes, 0, 0);
-
-            return reservationDateTime > now;
-        })
-        .sort((one, two) => {
-            const dateOne = new Date(one.reservationDate);
-            const dateTwo = new Date(two.reservationDate);
-
-            const timeOne = convertTo24Hour(one.startTime);
-            const timeTwo = convertTo24Hour(two.startTime);
-
-            dateOne.setHours(timeOne.hours, timeOne.minutes, 0, 0);
-            dateTwo.setHours(timeTwo.hours, timeTwo.minutes, 0, 0);
-
-            return dateOne - dateTwo;
-        })
-
-    let upcomingLab = "No upcoming reservations.";
-
-    if(upcomingReservations.length > 0){
-        upcomingLab = `${upcomingReservations[0].laboratoryRoom} on ${new Date(upcomingReservations[0].reservationDate).toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' })} at ${upcomingReservations[0].startTime}`;
-    }
-
-    // format data passed for display
-    const formattedReservations = reservations.map(reservation => {
-        return {
-            lab: reservation.laboratoryRoom,
-            date: reservation.reservationDate.toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }),
-            time: reservation.startTime + " - " + reservation.endTime,
-            seat: reservation.seatNumber,
-            status: getStatus(reservation)
-        };
-    });
-    
-    // Render profile with data
-    res.render("labtech-profile", { upcomingLab, reservations: formattedReservations, user });
+    await renderProfilePage(req, res, "labtech/profile", {});
 });
 
 
 // Profile Section Routes - Using route parameters for cleaner code
-app.get("/profile-:section", isAuth, (req, res) => {
-    const section = req.params.section;
-    const validSections = {
-        'overview': '#overview',
-        'account': '#dashboard',
-        'edit': '#edit',
-        'delete': '#delete'
-    };
-    
-    const hash = validSections[section] || '';
-    res.redirect(`/student-profile${hash}`);
-});
-
-// User Profiles
-
-// Generate popup profile with related user data
-app.get("/profile/:id", async (req, res) => {
-    try {
-        console.log(`Fetching user with ID: ${req.params.id}`);
-        
-        // Try to find the user in the User first
-        let user = await User.findById(req.params.id);
-        
-        if (!user) {
-            console.log(`User not found with ID: ${req.params.id}`);
-            return res.status(404).json({ message: "User not found" });
-        }
-        
-        // Return user data without sensitive information
-        const userData = {
-            _id: user._id,
-            firstName: user.firstName,
-            lastName: user.lastName,
-            image: user.image,
-            email: user.email,
-            biography: user.biography,
-            department: user.department,
-            type: user.type
-        };
-        
-        res.render("popup-profile", {userData});
-
-    } catch (error) {
-        console.error(`Error finding user: ${error.message}`);
-        res.status(500).json({ message: "Server error", error: error.message });
-    }
-})
+app.get("/profile-:section", isAuth, createProfileSectionRedirectHandler("/student-profile"));
 
 // Labtech Profile Section Routes
-app.get("/labtech-profile-:section", isAuth, (req, res) => {
-    const section = req.params.section;
-    const validSections = {
-        'overview': '#overview',
-        'account': '#dashboard',
-        'edit': '#edit',
-        'delete': '#delete'
-    };
-    
-    const hash = validSections[section] || '';
-    res.redirect(`/labtech-profile${hash}`);
-});
+app.get("/labtech-profile-:section", isAuth, createProfileSectionRedirectHandler("/labtech-profile"));
 
 
 // API endpoint to check seat availability
@@ -1056,7 +938,7 @@ app.get("/api/reservations/check-availability", async (req, res) => {
         // Check if there's already a reservation for this seat, date, and time
         const existingReservation = await Reservation.findOne({
             laboratoryRoom: lab,
-            seatNumber: parseInt(seatNumber),
+            seatNumber: parseInt(seatNumber, 10),
             reservationDate: date,
             startTime: startTime
         });
@@ -1088,7 +970,6 @@ app.get("/api/laboratories/:room", async (req, res) => {
         res.status(500).json({ message: "Server error", error });
     }
 });
-;
 
 // API endpoint to get reservations for a lab and date
 app.get("/api/reservations/lab/:labId/date/:date", async (req, res) => {
@@ -1147,58 +1028,7 @@ app.get("/api/reservations/lab/:labId/date/:date", async (req, res) => {
 // Create a new reservation
 app.post("/create-reservation", isAuth, async (req, res) => {
     try {
-        const { labId, date, seatNumber, startTime, endTime, userId, isAnonymous } = req.body;
-        
-        // Validate inputs
-        if (!labId || !date || !seatNumber || !startTime || !endTime || !userId) {
-            return res.status(400).send("All fields are required");
-        }
-        
-        console.log("Creating reservation with data:", req.body);
-        
-        // Format the reservation date
-        const reservationDate = new Date(date);
-        reservationDate.setDate(reservationDate.getDate() - 1); // assuming PH date ang reservationDate
-        reservationDate.setHours(24, 0, 0, 0); // from UTC to PH (T00:00 -> T16:00)
-        
-        // fetch lab data
-        const lab = await Laboratory.findById(labId);
-
-        if (!lab) {
-            return res.status(404).send("Laboratory not found");
-        }
-
-        // Check if there's already a reservation for this seat, date, and time
-        const existingReservation = await Reservation.findOne({
-            laboratoryRoom: lab.room,
-            seatNumber: parseInt(seatNumber),
-            reservationDate: reservationDate,
-            startTime: startTime
-        });
-        
-        if (existingReservation) {
-            return res.status(400).send("This seat is already reserved for the selected time");
-        }
-
-        const user = await User.findById(userId);
-
-        // Create and save the new reservation
-        const newReservation = new Reservation({
-            userId,
-            studentName: `${user.firstName} ${user.lastName}`,
-            laboratoryRoom: lab.room,
-            seatNumber: parseInt(seatNumber),
-            bookingDate: new Date(),
-            reservationDate: reservationDate,
-            startTime,
-            endTime,
-            isAnonymous
-        });
-        
-        await newReservation.save();
-        
-        // Redirect to student-reservations.html after successful booking
-        res.redirect('/student-reservations');
+        await createReservationAndRedirect(req, res, "/student-reservations", { includeAnonymous: true });
     } catch (error) {
         console.error("Error creating reservation:", error);
         res.status(500).send("An error occurred while creating the reservation");
@@ -1208,57 +1038,7 @@ app.post("/create-reservation", isAuth, async (req, res) => {
 // Create a new reservation as labtech
 app.post("/create-reservation-labtech", isAuth, async (req, res) => {
     try {
-        const { labId, date, seatNumber, startTime, endTime, userId} = req.body;
-        
-        // Validate inputs
-        if (!labId || !date || !seatNumber || !startTime || !endTime || !userId) {
-            return res.status(400).send("All fields are required");
-        }
-        
-        console.log("Creating reservation with data:", req.body);
-        
-        // Format the reservation date
-        const reservationDate = new Date(date);
-        reservationDate.setDate(reservationDate.getDate() - 1); // assuming PH date ang reservationDate
-        reservationDate.setHours(24, 0, 0, 0); // from UTC to PH (T00:00 -> T16:00)
-        
-        // fetch lab data
-        const lab = await Laboratory.findById(labId);
-
-        if (!lab) {
-            return res.status(404).send("Laboratory not found");
-        }
-
-        // Check if there's already a reservation for this seat, date, and time
-        const existingReservation = await Reservation.findOne({
-            laboratoryRoom: lab.room,
-            seatNumber: parseInt(seatNumber),
-            reservationDate: reservationDate,
-            startTime: startTime
-        });
-        
-        if (existingReservation) {
-            return res.status(400).send("This seat is already reserved for the selected time");
-        }
-        
-        const user = await User.findById(userId);
-
-        // Create and save the new reservation
-        const newReservation = new Reservation({
-            userId,
-            studentName: user.firstName + " " + user.lastName,
-            laboratoryRoom: lab.room,
-            seatNumber: parseInt(seatNumber),
-            bookingDate: new Date(),
-            reservationDate: reservationDate,
-            startTime,
-            endTime,
-        });
-        
-        await newReservation.save();
-    
-        // Redirect to labtech-reservations.html after successful booking
-        res.redirect('/labtech-reservations');
+        await createReservationAndRedirect(req, res, "/labtech-reservations");
     } catch (error) {
         console.error("Error creating reservation:", error);
         res.status(500).send("An error occurred while creating the reservation");
