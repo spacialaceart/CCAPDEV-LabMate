@@ -1,316 +1,63 @@
-<html>
-    <head>
-        <title>LabMate - Laboratories</title> 
-        <link rel="icon" type="image/x-icon" href="/img/favicon.ico">
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <link rel="stylesheet" href="/css/pop-up.css">
-        <link rel="stylesheet" href="/css/theme-style.css">
-        <link rel="stylesheet" href="/css/navbar-style.css">
-        <link rel="stylesheet" href="/css/signedout-laboratories.css">
-        
-        <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-        
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>LabMate - Laboratories</title>
+    <link rel="icon" type="image/x-icon" href="/img/favicon.ico">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/css/theme-style.css">
+    <link rel="stylesheet" href="/css/navbar-style.css">
+    <link rel="stylesheet" href="/css/signedout-laboratories.css">
+</head>
+<body>
+    {{> navbar-signedout}}
 
-        <style>
-            /* Seat styles */
-            .clickable-seat {
-                background-color: #D9D9D9;
-                color: white;
-                border: none;
-                padding: 10px;
-                text-align: center;
-                text-decoration: none;
-                display: inline-block;
-                font-size: 16px;
-                margin: 4px 2px;
-                border-radius: 5px;
-            }
-            
-            .taken-seat {
-                background-color: #FF7878;
-                color: white;
-                border: none;
-                padding: 10px;
-                text-align: center;
-                text-decoration: none;
-                display: inline-block;
-                font-size: 16px;
-                margin: 4px 2px;
-                cursor: pointer;
-                border-radius: 5px;
-            }
-        
-            #view-button{
-                width: 150px;
-                background-color: var(--dark-blue);
-                color: var(--off-white);
-                font-family: var(--primary-font-family);
-                font-size: 13px;
-                font-weight: 500;
-                border: none;
-                border-radius: 10px;
-                padding: 10px;
-                cursor: pointer;
-                transition: all 0.3s ease;
-                margin-top: 50px;
-                margin-bottom: 10px;
-            }
+    <div class="frame">
+        <span class="header">View Slot Availability</span>
 
-            #view-button:hover{
-                transform: scale(1.05);
-            }
+        <div class="dropdown">
+            <span class="dropdown-header">Laboratory</span>
+            <select name="labs" id="labs">
+                <option value="" disabled selected>Select a Laboratory</option>
+                {{#each labs}}
+                    <option value="{{this._id}}" data-capacity="{{this.capacity}}">{{this.room}} | {{this.hall}}</option>
+                {{/each}}
+            </select>
+        </div>
 
-        </style>
+        <div class="dropdown">
+            <span class="dropdown-header">Date</span>
+            <select name="dates" id="dates">
+                <option value="" disabled selected>Select a Date</option>
+                {{#each next7Days}}
+                    <option value="{{this.formattedDate}}">{{this.displayDate}}</option>
+                {{/each}}
+            </select>
+        </div>
 
-    </head>
+        <button id="view-button" type="button">View Slots</button>
 
-    <body>
-        {{>navbar-signedout}}
+        <div id="chart">
+            <span id="chart-header">Slot Availability</span>
 
-        <div class="frame">
-            <span class="header">View Slot Availability</span>
-
-            <div class="dropdown">
-                <span class="dropdown-header">Laboratory</span>
-                <select name = "labs" id = "labs">
-                    <option value = "" disabled selected>Select a Laboratory</option>
-                    {{#each labs}}
-                        <option value="{{this._id}}" data-capacity = {{this.capacity}}>{{this.room}} | {{this.hall}}</option>
-                    {{/each}}
-                </select>
-            </div>
-
-            <div class="dropdown">
-                <span class="dropdown-header">Date</span>
-                <select name="dates" id="dates">
-                    <option value="" disabled selected>Select a Date</option>
-                </select>
-            </div>
-
-            <button id = "view-button">View Slots</button>
-
-            <div id="chart">
-                <span id="chart-header">Slot Availability</span>
-                
-                <div id="chart-body">
-                    <table id="slot-chart">
-                        <thead>
-                            <tr>
-                                
-                            </tr>
-                        </thead>
-                        <tbody id = "timetable">
-                            
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
-            <div id="legend">
-                <div id="legend-available"></div>
-                <span class="legend-text">Available</span>
-                <div id="legend-unavailable"></div>
-                <span class="legend-text">Unavailable</span>
+            <div id="chart-body">
+                <table id="slot-chart">
+                    <thead>
+                        <tr></tr>
+                    </thead>
+                    <tbody id="timetable"></tbody>
+                </table>
             </div>
         </div>
 
-        <div id="overlay" class="overlay"></div>
+        <div id="legend">
+            <div id="legend-available"></div>
+            <span class="legend-text">Available</span>
+            <div id="legend-unavailable"></div>
+            <span class="legend-text">Unavailable</span>
+        </div>
+    </div>
 
-        <!-- View Button -->
-
-        <script>
-            function toggleViewSlots() {
-                const chartBody = document.getElementById("chart-body");
-                const viewToggle = document.querySelector("a#view-toggle");
-                if (viewToggle.textContent === 'Expand view') {
-                    chartBody.style.height = "";
-                    chartBody.style.overflowY = "";
-                    viewToggle.textContent = 'Minimize view'
-                } else {
-                    chartBody.style.height = "500px";
-                    chartBody.style.overflowY = "scroll";
-                    viewToggle.textContent = 'Expand view'
-                }
-            }
-
-            function isTimeInRange(time, startTime, endTime) {
-                const toMinutes = (t) => {
-                    const match = t.match(/(\d+):(\d+)\s+(A\.M\.|P\.M\.)/);
-                    if (!match) return 0;
-                    
-                    let [_, hour, minute, period] = match;
-                    hour = parseInt(hour);
-                    minute = parseInt(minute);
-                    
-                    let totalMinutes = hour * 60 + minute;
-                    
-                    if (period === "P.M." && hour !== 12) totalMinutes += 12 * 60;
-                    if (period === "A.M." && hour === 12) totalMinutes = minute;        
-                    return totalMinutes;
-                };
-
-                const currentTime = toMinutes(time);
-                const start = toMinutes(startTime);
-                const end = toMinutes(endTime);
-
-                return currentTime >= start && currentTime < end;
-            }
-
-            document.getElementById("view-button").addEventListener("click", function()
-            {
-                const selectedLab = document.getElementById("labs").options[document.getElementById("labs").selectedIndex]
-
-                const selectedDate = document.getElementById("dates").value;
-                const capacity = selectedLab.getAttribute("data-capacity");
-
-                const timeSlots = [
-                    "07:30 A.M.", "08:00 A.M.", "08:30 A.M.", "09:00 A.M.",
-                    "09:30 A.M.", "10:00 A.M.", "10:30 A.M.", "11:00 A.M.",
-                    "11:30 A.M.", "12:00 P.M.", "12:30 P.M.", "01:00 P.M.",
-                    "01:30 P.M.", "02:00 P.M.", "02:30 P.M.", "03:00 P.M.",
-                    "03:30 P.M.", "04:00 P.M.", "04:30 P.M.", "05:00 P.M.",
-                    "05:30 P.M.", "06:00 P.M.", "06:30 P.M.", "07:00 P.M.",
-                    "07:30 P.M.", "08:00 P.M.", "08:30 P.M."
-                ];
-
-                const timetable = document.getElementById("timetable");
-
-                if(!capacity || !selectedDate) {
-                    timetable.innerHTML = "";
-                    return;
-                }
-                
-                const today = new Date().toISOString().split('T')[0];
-                const isToday = selectedDate === today;
-
-                let availableTimeSlots = [...timeSlots];
-                
-                if(isToday) {
-                    const now = new Date();
-                    const currentHour = now.getHours();
-                    const currentMinute = now.getMinutes();
-
-                    availableTimeSlots = timeSlots.filter(timeSlot => {
-                        const match = timeSlot.match(/(\d+):(\d+)\s+(A\.M\.|P\.M\.)/);
-                        if (!match) return false;
-                        
-                        let [_, hourStr, minuteStr, period] = match;
-                        let hour = parseInt(hourStr);
-                        const minute = parseInt(minuteStr);
-            
-                        if (period === "P.M." && hour !== 12) hour += 12;
-                        if (period === "A.M." && hour === 12) hour = 0;
-
-                        return (hour > currentHour) || (hour === currentHour && minute > currentMinute);
-                    });
-
-                    if(availableTimeSlots.length === 0) {
-                        timetable.innerHTML = "<tr><td colspan='100%' style='text-align: center; padding: 20px;'>No available time slots for today. Please select another date.</td></tr>";
-                        return;
-                    }
-                }
-                
-                let reservations = [];
-
-                fetch(`/api/reservations/lab/${selectedLab.value}/date/${selectedDate}`)
-                    .then(response => response.json())
-                    .then(data => {
-                        const reservations = data.reservations || [];
-
-                        let timetableHTML = "";
-                
-                        timetableHTML += `<th id = "seat-header">Seat</th>`;
-                        
-                        const displayTimeSlots = isToday ? availableTimeSlots : timeSlots;
-
-                        displayTimeSlots.forEach((time) => {
-                            timetableHTML +=
-                                `<div id = "time-header">
-                                    <th>${time}</th>
-                                </div>`                    
-                        });
-
-                        for (let seat = 1; seat <= capacity; seat++) {
-                            timetableHTML += `<tr><td class="freezecol">Seat ${seat}</td>`;
-                            displayTimeSlots.forEach((time, index) => {
-                                const matchingReservation = reservations.find(
-                                reservation => reservation.seatNumber === seat && isTimeInRange(time, reservation.startTime, reservation.endTime)
-                                );
-
-                                let seatClass = "clickable-seat";
-
-                                if(matchingReservation) {
-                                    seatClass = "taken-seat";
-                                }
-
-                                timetableHTML +=
-                                    `<td>
-                                        <button class = "${seatClass}"
-                                            seat-number = "${seat}"
-                                            seat-time = "${time}">
-                                        </button>
-                                    </td>`;
-                            });
-                            timetableHTML += `</tr>`;
-                        }
-
-                        timetable.innerHTML = timetableHTML;
-
-                        document.querySelectorAll(".taken-seat").forEach(seat => {
-                            seat.addEventListener("click", () => {
-                                alert('Please sign in to the view reservation details of this seat.');
-                            });
-                        });
-                    })
-                    .catch(error => {
-                        console.error("Error fetching reservations: ", error);
-                    });
-
-                // add slot view toggle after loading slots
-                if (!document.querySelector("a#view-toggle")) {
-                    document.querySelector("#chart-header").innerHTML += " (<a id='view-toggle' onclick='toggleViewSlots()' style='text-decoration: underline; cursor: pointer;'>Minimize view</a>)"
-                }
-            });
-
-            // Generate the next 7 days dynamically
-            function generateNext7Days() {
-                const dateSelect = document.getElementById('dates');
-                // Clear existing options except the first one
-                while (dateSelect.options.length > 1) {
-                    dateSelect.remove(1);
-                }
-                
-                const today = new Date();
-                
-                for (let i = 0; i <= 7; i++) {
-                    const date = new Date();
-                    date.setDate(today.getDate() + i);
-                    
-                    const formattedDate = date.toISOString().split('T')[0];
-                    const displayDate = date.toLocaleDateString('en-US', {
-                        weekday: 'long',
-                        month: 'long',
-                        day: 'numeric'
-                    });
-                    
-                    const option = document.createElement('option');
-                    option.value = formattedDate;
-                    option.text = displayDate;
-                    dateSelect.appendChild(option);
-                }
-            }
-
-            window.onload = function() {
-                generateNext7Days();
-                
-                // If there's a success parameter in the URL, scroll to the top
-                const urlParams = new URLSearchParams(window.location.search);
-                if (urlParams.get('success')) {
-                    window.scrollTo(0, 0);
-                }
-            };
-            
-        </script>
-    </body>
+    <script src="/js/signedout-laboratories.js"></script>
+</body>
 </html>
