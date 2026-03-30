@@ -3,43 +3,48 @@ require("../config/loadEnv");
 const argon2 = require("argon2");
 
 const User = require("./models/User");
+const { demoAdmins } = require("./seedData");
 
-const DEFAULT_ADMIN_EMAIL = "admin@dlsu.edu.ph";
-const DEFAULT_ADMIN_PASSWORD = "admin";
+function getDefaultAdminSeed() {
+    const defaultAdminSeed = demoAdmins[0];
+
+    if (!defaultAdminSeed) {
+        throw new Error("No demo admin account is defined in database/seedData.js.");
+    }
+
+    return defaultAdminSeed;
+}
 
 async function ensureAdminAccount() {
+    const defaultAdminSeed = getDefaultAdminSeed();
     const adminCount = await User.countDocuments({ type: "Admin" });
 
     if (adminCount > 0) {
         return false;
     }
 
-    const existingAdminByEmail = await User.findOne({ email: DEFAULT_ADMIN_EMAIL });
+    const existingAdminByEmail = await User.findOne({ email: defaultAdminSeed.email });
 
     if (existingAdminByEmail) {
         existingAdminByEmail.type = "Admin";
         await existingAdminByEmail.save();
-        console.log(`Promoted existing ${DEFAULT_ADMIN_EMAIL} account to Admin role.`);
+        console.log(`Promoted existing ${defaultAdminSeed.email} account to Admin role.`);
         return true;
     }
 
-    const defaultAdminPassword = await argon2.hash(DEFAULT_ADMIN_PASSWORD);
+    const defaultAdminPassword = await argon2.hash(defaultAdminSeed.password);
+    const { password, ...defaultAdminProfile } = defaultAdminSeed;
 
     await User.create({
-        type: "Admin",
-        firstName: "Admin",
-        lastName: "Admin",
-        email: DEFAULT_ADMIN_EMAIL,
-        biography: "Administrator account",
+        ...defaultAdminProfile,
         password: defaultAdminPassword
     });
 
-    console.log(`Created default Administrator account (${DEFAULT_ADMIN_EMAIL}).`);
+    console.log(`Created default Administrator account (${defaultAdminSeed.email}).`);
     return true;
 }
 
 module.exports = {
-    DEFAULT_ADMIN_EMAIL,
-    DEFAULT_ADMIN_PASSWORD,
+    getDefaultAdminSeed,
     ensureAdminAccount
 };

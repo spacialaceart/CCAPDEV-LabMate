@@ -18,7 +18,9 @@ Note that upon first run, the database will be automatically seeded with users, 
 
 ## Signing in - Seeded Dummy Profiles
 
-On first run, the app seeds demo users when the database has no users and no laboratories. Use the following dummy accounts to test each role:
+On first run, the app seeds demo users when the database has no users and no laboratories. The default demo credentials below are defined in `database/seedData.js`.
+
+Use the following dummy accounts to test each role:
 
 ### Student dummy
 * Email: `student@dlsu.edu.ph`
@@ -32,7 +34,7 @@ On first run, the app seeds demo users when the database has no users and no lab
 * Email: `admin@dlsu.edu.ph`
 * Password: `admin`
 
-Administrator access is not available through public signup. To access admin-only pages, sign in using the admin account above. The server also guarantees that at least one Administrator exists on startup: if no Admin account is found, it will either promote `admin@dlsu.edu.ph` to `Admin` or create that account automatically.
+Administrator access is not available through public signup. To access admin-only pages, sign in using the seeded admin account above. The server also guarantees that at least one Administrator exists on startup by using the default admin seed from `database/seedData.js`: if no Admin account is found, it will either promote the account with that seeded email to `Admin` or create the seeded admin account automatically.
 
 ## Signing up
 
@@ -41,7 +43,7 @@ To test signup via a newly created user account, navigate to "Sign Up" to create
 * Checking new email against existing accounts as to not disrupt logic for fetching user data from database
 * Public signup is for student accounts only
 * LabTech and Admin accounts can only be created, assigned, or deleted by an Administrator through the Admin panel (`/admin-accounts`)
-* If you need Admin access for another account, sign in as `admin@dlsu.edu.ph` and assign the role from the Admin panel
+* If you need Admin access for another account, sign in using the seeded admin account above and assign the role from the Admin panel
 * Application logs are read-only and accessible only to Administrator accounts
 
 # Notes on Implementation
