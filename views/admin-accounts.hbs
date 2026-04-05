@@ -13,6 +13,16 @@
             color: #1d3853;
         }
 
+        .subheader{
+            text-align: center;
+            font-family: var(--secondary-font-family);
+            font-weight: 600;
+            font-size: 18px;
+            color: var(--dark-blue);
+            padding-left: 10px;
+            margin-bottom: 20px;
+        }
+
         .admin-card {
             background: #ffffff;
             border: 1px solid #dbe5ef;
@@ -163,6 +173,16 @@
     {{> navbar}}
 
     <div class="admin-shell">
+
+        {{!----}}
+        {{#if lastLogin}}
+            <span class="subheader">Your last login was on {{lastLogin}}.</span>
+        {{else}}
+            <span class="subheader">No previous login data available.</span>
+        {{/if}}
+
+        <span class="subheader"><br />.</span>
+
         <section class="admin-card">
             <h1>Administrator Account Controls</h1>
             <p>Create, assign, and delete LabTech/Admin accounts. Student signup remains public-only.</p>

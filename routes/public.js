@@ -13,6 +13,39 @@ const { addApplicationLog } = require("../services/applicationLogService");
 
 const router = express.Router();
 
+function validatePassword(newPass) {
+  const errors = [];
+
+  if (newPass.length < 8) {
+    errors.push(" must be at least 8 characters long");
+  }
+
+  if (!/[a-z]/.test(newPass)) {
+    errors.push(" must include at least one lowercase letter");
+  }
+
+  if (!/[A-Z]/.test(newPass)) {
+    errors.push(" must include at least one uppercase letter");
+  }
+
+  if (!/\d/.test(newPass)) {
+    errors.push(" must include at least one number");
+  }
+
+  if (!/[^A-Za-z\d]/.test(newPass)) {
+    errors.push(" must include at least one special character");
+  }
+
+  if (errors.length > 0) {
+    errors[0] = "Password" + errors[0];
+  }
+
+  return {
+    isValid: errors.length === 0,
+    errors
+  };
+}
+
 router.get("/", async (req, res) => {
     if (req.session.user) {
         const user = await refreshSessionUser(req);
@@ -48,32 +81,69 @@ router.post("/signin", async (req, res) => {
 
         console.log("Received sign-in request for email:", email);
 
+        //NEW: add logging for missing fields
         if (!email || !password) {
+
+            addApplicationLog({
+                actorName: "Guest",
+                actorType: "Guest",
+                action: "VALIDATION_FAILED",
+                target: "SIGN_IN",
+                metadata: "Missing email or password"
+            });
+
             return res.status(400).json({ error: "Email and password are required" });
         }
 
         const user = await User.findOne({ email });
 
         if (!user) {
-            return res.status(401).json({ error: "Account does not exist. Please try again with a different email" });
+            return res.status(401).json({ error: "Invalid username and/or password." }); 
+        }
+
+        //NEW: check for account lockout before verifying password
+        if (user.lockUntil && user.lockUntil > Date.now()) {
+            return res.status(403).json({
+                error: "Account is temporarily locked. Please try again later."
+            });
         }
 
         try {
             const passMatch = await argon2.verify(user.password, password);
-            if (!passMatch) {
-                return res.status(401).json({ error: "Password is incorrect. Please try again." });
-            }
-        } catch (verifyError) {
-            console.error("Password verification error:", verifyError.message);
 
-            if (verifyError.message.includes("must contain a $ as first char")) {
+        
+            if (!passMatch) {
+                user.failedLoginAttempts += 1;
+
+                //account lock for 15 mins after 5 failed attempts
+                if (user.failedLoginAttempts >= 5) {
+                    user.lockUntil = Date.now() + (15 * 60 * 1000); // 15 mins
+
+                    addApplicationLog({
+                        actorName: user.email,
+                        actorType: user.type,
+                        action: "ACCOUNT_LOCKED",
+                        target: user.email
+                    });
+                }
+
+                await user.save();
+
                 return res.status(401).json({
-                    error: "There was an issue with your password. Please try again later or contact support."
+                    error: "Invalid username and/or password."
                 });
             }
 
+        } catch (verifyError) {
+            console.error("Password verification error:", verifyError.message);
+
             return res.status(401).json({ error: "Authentication failed. Please try again." });
         }
+
+        // if success restore default values for lockout and failed attempts
+        user.failedLoginAttempts = 0;
+        user.lockUntil = null;
+        await user.save();
 
         req.session.user = user.toObject();
 
@@ -108,10 +178,42 @@ router.post("/signup", async (req, res) => {
         console.log("Received sign-up request:", { firstName, lastName, email, type });
 
         if (!firstName || !lastName || !email || !newPass || !confirmPass) {
+            //NEW: add logging for missing fields
+            addApplicationLog({
+                actorName: "Guest",
+                actorType: "Guest",
+                action: "VALIDATION_FAILED",
+                target: "SIGN_UP",
+                metadata: "Missing required fields"
+            });
+
             return res.status(400).json({ error: "All fields are required" });
         }
 
-        if (newPass !== confirmPass) {
+        passStrengthCheck = validatePassword(newPass);
+        if (!passStrengthCheck.isValid) {
+            //NEW: add logging for password strength failure
+            addApplicationLog({
+                actorName: email,
+                actorType: "Guest",
+                action: "VALIDATION_FAILED",
+                target: "SIGN_UP",
+                metadata: passStrengthCheck.errors.join(", ")
+            });
+
+            return res.status(400).json({ error: passStrengthCheck.errors });
+        }
+
+       if (newPassword !== confirmPassword) {
+            //NEW: add logging for password mismatch
+            addApplicationLog({
+                actorName: user.email,
+                actorType: user.type,
+                action: "VALIDATION_FAILED",
+                target: "CHANGE_PASSWORD",
+                metadata: "Passwords do not match"
+            });
+
             return res.status(400).json({ error: "Passwords do not match" });
         }
 
@@ -134,7 +236,12 @@ router.post("/signup", async (req, res) => {
             lastName,
             email,
             password: hashPass,
-            type: "Student"
+            type: "Student",
+            //NEW: initialize password history
+            passwordHistory: [hashPass],
+
+            //NEW: track last successful password change
+            lastPasswordChange: null
         });
 
         await newUser.save();

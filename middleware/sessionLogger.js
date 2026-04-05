@@ -16,11 +16,15 @@ function logSessionState(req, res, next) {
         console.log("No user is currently logged in.");
     }
 
+    metadata = null;
+    metadata = req.body?.email;
+
     addApplicationLog({
         actorName: hasUser ? `${req.session.user.firstName} ${req.session.user.lastName}` : "Guest",
         actorType: hasUser ? req.session.user.type : "Guest",
         action: `${req.method} ${req.originalUrl}`,
-        target: "HTTP_REQUEST"
+        target: "HTTP_REQUEST",
+        metadata
     });
 
     next();

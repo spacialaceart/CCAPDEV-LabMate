@@ -9,6 +9,34 @@ const PostSchema = new mongoose.Schema({
     password: { type: String, required: true },
     biography: { type: String, default: "No biography provided yet." },
     department: { type: String, default: "N/A" },
+
+    //account lockout fields
+    failedLoginAttempts: { type: Number, default: 0 },
+    lockUntil: { type: Date, default: null },
+
+    //password history fields
+    passwordHistory: {
+    type: [String],
+    default: []
+    },
+    lastPasswordChange: {
+        type: Date,
+        default: Date.now
+    },
+
+    //account lockout fields
+    failedLoginAttempts: {
+    type: Number,
+    default: 0
+    },
+    lockUntil: {
+        type: Date,
+        default: null
+    }
+
+    
+
+
 })
 
 const User = mongoose.model('User', PostSchema)

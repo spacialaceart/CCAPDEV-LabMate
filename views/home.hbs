@@ -19,6 +19,12 @@
         <div class="frame">
             <span class="header">What would you like to do next, <span id="user-name">{{user.firstName}} {{user.lastName}}</span>?</span>
 
+            {{#if lastLogin}}
+                <span class="subheader">Your last login was on {{lastLogin}}.</span>
+            {{else}}
+                <span class="subheader">No previous login data available.</span>
+            {{/if}}
+
             <div class="box-frame">
                 <div class="box">
                     <i class="fa-solid fa-computer"></i>

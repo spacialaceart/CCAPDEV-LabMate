@@ -24,6 +24,17 @@ body{
     padding: 80px 100px 50px 100px;
 }
 
+.subheader{
+    position: relative;
+    text-align: center;
+    font-family: var(--secondary-font-family);
+    font-weight: 600;
+    font-size: 18px;
+    color: var(--dark-blue);
+    padding: 0px 10px 10px 10px;
+
+}
+
 .box-frame{
     position: relative;
     align-items: center;

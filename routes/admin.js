@@ -29,6 +29,42 @@ router.get("/admin-home", isAuth, requireAdmin, (req, res) => {
 });
 
 router.get("/admin-accounts", isAuth, requireAdmin, async (req, res) => {
+    const currentUser = req.session.user;
+
+    const logs = getApplicationLogs();
+
+    const userSigninLogs = logs.filter(entry =>
+        entry.metadata == currentUser.email &&
+        entry.action == "POST /signin"
+        
+    ); 
+
+    const FIFTEEN_MINUTES = 15 * 60 * 1000;
+    const now = Date.now();
+
+    const validLogs = userSigninLogs.filter(entry => {
+        const logTime = new Date(entry.timestamp).getTime();
+        return (now - logTime) > FIFTEEN_MINUTES;
+    });
+
+    let lastLogin = null;
+    if (validLogs.length > 0) {
+        lastLogin = validLogs[validLogs.length - 1];
+    }
+
+    let displayTimestamp = null;
+
+    if (lastLogin) {
+        displayTimestamp = new Date(lastLogin.timestamp).toLocaleString("en-PH", {
+            year: "numeric",
+            month: "short",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit"
+        });
+    }
+
     const privilegedUsers = await User.find({ type: { $in: MANAGED_SOURCE_ROLES } })
         .sort({ type: 1, firstName: 1, lastName: 1 })
         .lean();
@@ -37,7 +73,8 @@ router.get("/admin-accounts", isAuth, requireAdmin, async (req, res) => {
         user: req.session.user,
         privilegedUsers,
         message: req.query.message,
-        error: req.query.error
+        error: req.query.error,
+        lastLogin: displayTimestamp
     });
 });
 
