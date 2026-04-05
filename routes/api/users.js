@@ -12,6 +12,8 @@ const {
 const User = require("../../database/models/User");
 const argon2 = require("argon2");
 
+const { addApplicationLog } = require("../../services/applicationLogService");
+
 function validatePassword(newPass) {
   const errors = [];
 
@@ -227,13 +229,13 @@ router.post("/changepassword", async (req, res) => {
 
         await user.save();
 
-        // // Logging
-        // addApplicationLog({
-        //     actorName: `${user.firstName} ${user.lastName}`,
-        //     actorType: user.type,
-        //     action: "CHANGE_PASSWORD",
-        //     target: user.email
-        // });
+        // Logging
+        addApplicationLog({
+            actorName: `${user.firstName} ${user.lastName}`,
+            actorType: user.type,
+            action: "CHANGE_PASSWORD",
+            target: user.email
+        });
 
         return res.json({ success: true, message: "Password changed successfully." });
 
