@@ -22,6 +22,16 @@ const PostSchema = new mongoose.Schema({
     lastPasswordChange: {
         type: Date,
         default: Date.now
+    },
+
+    //account lockout fields
+    failedLoginAttempts: {
+    type: Number,
+    default: 0
+    },
+    lockUntil: {
+        type: Date,
+        default: null
     }
 
     

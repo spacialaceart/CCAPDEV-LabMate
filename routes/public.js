@@ -91,22 +91,49 @@ router.post("/signin", async (req, res) => {
             return res.status(401).json({ error: "Invalid username and/or password." }); 
         }
 
+        //NEW: check for account lockout before verifying password
+        if (user.lockUntil && user.lockUntil > Date.now()) {
+            return res.status(403).json({
+                error: "Account is temporarily locked. Please try again later."
+            });
+        }
+
         try {
             const passMatch = await argon2.verify(user.password, password);
-            if (!passMatch) {
-                return res.status(401).json({ error: "Invalid username and/or password." });
-            }
-        } catch (verifyError) {
-            console.error("Password verification error:", verifyError.message);
 
-            if (verifyError.message.includes("must contain a $ as first char")) {
+        
+            if (!passMatch) {
+                user.failedLoginAttempts += 1;
+
+                //account lock for 15 mins after 5 failed attempts
+                if (user.failedLoginAttempts >= 5) {
+                    user.lockUntil = Date.now() + (15 * 60 * 1000); // 15 mins
+
+                    addApplicationLog({
+                        actorName: user.email,
+                        actorType: user.type,
+                        action: "ACCOUNT_LOCKED",
+                        target: user.email
+                    });
+                }
+
+                await user.save();
+
                 return res.status(401).json({
-                    error: "There was an issue with your password. Please try again later or contact support."
+                    error: "Invalid username and/or password."
                 });
             }
 
+        } catch (verifyError) {
+            console.error("Password verification error:", verifyError.message);
+
             return res.status(401).json({ error: "Authentication failed. Please try again." });
         }
+
+        // if success restore default values for lockout and failed attempts
+        user.failedLoginAttempts = 0;
+        user.lockUntil = null;
+        await user.save();
 
         req.session.user = user.toObject();
 
