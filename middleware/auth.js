@@ -1,4 +1,5 @@
 const { getHomePathByType } = require("../services/sessionService");
+const { addApplicationLog } = require("../services/applicationLogService");
 
 function isAuth(req, res, next) {
     if (req.session.user) {
