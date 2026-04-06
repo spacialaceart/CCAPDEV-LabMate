@@ -210,7 +210,7 @@
         <main class="main-content" id="password-section" style="display: none;">
             <div class="profile-card">
                 <h2>Change Password</h2>
-                <p class="settings-section-copy">Set a new password for your account. This simple version only requires you to be logged in.</p>
+                <p class="settings-section-copy">Set a new password for your account.</p>
 
                 <form id="change-password-form">
                     <div class="form-group" style="padding-top: 10px; padding-bottom: 10px;">
@@ -230,6 +230,39 @@
 
                     <div class="form-actions">
                         <button type="submit" class="save-btn">Change Password</button>
+                        <button type="button" class="cancel-btn" onclick="cancelPassword()">Cancel</button>
+                    </div>
+                </form>
+            </div>
+
+            <div class="profile-card">
+                <h2>Reset Password</h2>
+                <p class="settings-section-copy">Forgot your password?</p>
+
+                <form id="reset-password-form">
+                    <div class="form-group" style="padding-top: 10px; padding-bottom: 10px;">
+                        <label for="new-password">Security question: What is your mother's maiden name?</label>
+                        <input type="password" id="security-question" name="securityQuestion" required>
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="submit" class="save-btn">Submit</button>
+                        <button type="button" class="cancel-btn" onclick="cancelPassword()">Cancel</button>
+                    </div>
+                </form>
+            </div>
+
+            <div class="profile-card">
+                <h2>Set Security Question</h2>
+
+                <form id="set-security-question-form">
+                    <div class="form-group" style="padding-top: 10px; padding-bottom: 10px;">
+                        <label for="new-password">What is your mother's maiden name?</label>
+                        <input type="password" id="security-question-answer" name="securityQuestionAnswer" required>
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="submit" class="save-btn">Submit</button>
                         <button type="button" class="cancel-btn" onclick="cancelPassword()">Cancel</button>
                     </div>
                 </form>
@@ -387,6 +420,64 @@
             .catch((error) => {
                 console.error("Error:", error);
                 alert("An error occurred while changing the password.");
+            });
+        });
+
+        document.getElementById("reset-password-form").addEventListener("submit", function(event) {
+            event.preventDefault();
+
+            const securityQuestion = document.getElementById("security-question").value;
+
+            fetch("/api/user/resetpassword", {
+                method: "PUT",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    securityQuestion
+                })
+            })
+            .then((response) => response.json())
+            .then((data) => {
+                if (data.success) {
+                    alert(data.message);
+                    document.getElementById("reset-password-form").reset();
+                } else {
+                    alert(data.message || "Failed to reset password. Please try again.");
+                }
+            })
+            .catch((error) => {
+                console.error("Error:", error);
+                alert("An error occurred while resetting the password.");
+            });
+        });
+
+        document.getElementById("set-security-question-form").addEventListener("submit", function(event) {
+            event.preventDefault();
+
+            const securityQuestionAnswer = document.getElementById("security-question-answer").value;
+
+            fetch("/api/user/setsecurityquestion", {
+                method: "PUT",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    securityQuestionAnswer
+                })
+            })
+            .then((response) => response.json())
+            .then((data) => {
+                if (data.success) {
+                    alert(data.message);
+                    document.getElementById("set-security-question-form").reset();
+                } else {
+                    alert(data.message || "Failed to set question. Please try again.");
+                }
+            })
+            .catch((error) => {
+                console.error("Error:", error);
+                alert("An error occurred while setting the question.");
             });
         });
 

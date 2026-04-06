@@ -6,7 +6,8 @@ const {
     buildBasicUserData,
     updateUserProfile,
     updateUserPassword,
-    deleteUserAccount
+    deleteUserAccount,
+    updateSecurityAnswer
 } = require("../../services/userService");
 
 const User = require("../../database/models/User");
@@ -211,6 +212,94 @@ router.put("/api/user/password", isAuth, async (req, res) => {
     } catch (error) {
         console.error("Error during password change:", error.message, error.stack);
         res.status(500).json({ success: false, error: "An error occurred during password change" });
+    }
+});
+
+router.put("/api/user/resetpassword", isAuth, async (req, res) => {
+    try {
+        const { securityQuestion } = req.body;
+
+        
+        const email = req.session.user?.email;
+        if (!email) {
+            return res.status(400).json({ success: false, message: "No email found." });
+        } 
+
+        const user = await User.findOne({ email });
+        if (!user) {
+            return res.status(400).json({ success: false, message: "No user found." });
+        } 
+
+        try {
+            const ansMatch = await argon2.verify(user.securityAnswer, securityQuestion);
+            if (!ansMatch) {
+                return res.status(400).json({ success: false, message: "Answer is incorrect." });
+            }
+        } catch (verifyError) {
+            console.error("Security verification error:", verifyError.message);
+
+            if (verifyError.message.includes("must contain a $ as first char")) {
+                return res.status(401).json({
+                    success: false,
+                    error: "There was an issue with your security question. Please try again later or contact support."
+                });
+            }
+
+            return res.status(401).json({ success: false, error: "Authentication failed. Please try again." });
+        }
+
+        const user2 = await updateUserPassword(req.session.user._id, "NewPassword123!");
+
+        req.session.user = user2.toObject();
+
+        // Logging
+        addApplicationLog({
+            actorName: `${user.firstName} ${user.lastName}`,
+            actorType: user.type,
+            action: "RESET_PASSWORD",
+            target: user.email
+        });
+
+        return res.json({ success: true, message: "Your password has been changed to NewPassword123!" });
+    } catch (error) {
+        console.error("Error during password reset:", error.message, error.stack);
+        res.status(500).json({ success: false, error: "An error occurred during password reset" });
+    }
+});
+
+router.put("/api/user/setsecurityquestion", isAuth, async (req, res) => {
+    try {
+        const { securityQuestionAnswer } = req.body;
+
+        if (!securityQuestionAnswer) {
+            return res.status(400).json({ success: false, message: securityQuestionAnswer });
+        } 
+
+        const email = req.session.user?.email;
+        if (!email) {
+            return res.status(400).json({ success: false, message: "No email found." });
+        } 
+
+        if(!req.session.user._id) {
+            return res.status(400).json({ success: false, message: "No current session ID" });
+        } 
+
+        // save answer
+        const user = await updateSecurityAnswer(req.session.user._id, securityQuestionAnswer);
+        req.session.user = user.toObject();
+
+        // Logging
+        addApplicationLog({
+            actorName: `${user.firstName} ${user.lastName}`,
+            actorType: user.type,
+            action: "CHANGE_SECURITY_ANSWER",
+            target: user.email
+        }); 
+
+        return res.json({ success: true, message: "Answer updated successfully" });
+    } catch (error) {
+        console.error("Error during password change:", error.message, error.stack);
+        res.status(500).json({ success: false, message: "An error occurred during answer change" });
     }
 });
 

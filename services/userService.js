@@ -110,11 +110,25 @@ async function deleteUserAccount(userId, password) {
     };
 }
 
+async function updateSecurityAnswer(userId, newAnswer) {
+    const user = await User.findById(userId);
+
+    if (!user) {
+        return null;
+    }
+
+    user.securityAnswer = await argon2.hash(newAnswer);
+    await user.save();
+
+    return user;
+}
+
 module.exports = {
     findUserById,
     buildDetailedUserData,
     buildBasicUserData,
     updateUserProfile,
     updateUserPassword,
-    deleteUserAccount
+    deleteUserAccount,
+    updateSecurityAnswer
 };

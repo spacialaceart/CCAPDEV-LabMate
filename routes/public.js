@@ -171,13 +171,13 @@ router.post("/signin", async (req, res) => {
 
 router.post("/signup", async (req, res) => {
     try {
-        let { firstName, lastName, email, newPass, confirmPass, type } = req.body;
+        let { firstName, lastName, email, newPass, confirmPass, type, securityAnswer } = req.body;
         email = email.toLowerCase();
         type = type || "Student";
 
         console.log("Received sign-up request:", { firstName, lastName, email, type });
 
-        if (!firstName || !lastName || !email || !newPass || !confirmPass) {
+        if (!firstName || !lastName || !email || !newPass || !confirmPass || !securityAnswer) {
             //NEW: add logging for missing fields
             addApplicationLog({
                 actorName: "Guest",
@@ -190,7 +190,7 @@ router.post("/signup", async (req, res) => {
             return res.status(400).json({ error: "All fields are required" });
         }
 
-        passStrengthCheck = validatePassword(newPass);
+        const passStrengthCheck = validatePassword(newPass);
         if (!passStrengthCheck.isValid) {
             //NEW: add logging for password strength failure
             addApplicationLog({
@@ -204,13 +204,14 @@ router.post("/signup", async (req, res) => {
             return res.status(400).json({ error: passStrengthCheck.errors });
         }
 
-       if (newPassword !== confirmPassword) {
+       //if (newPassword !== confirmPassword) {
+       if (newPass !== confirmPass) {
             //NEW: add logging for password mismatch
             addApplicationLog({
-                actorName: user.email,
-                actorType: user.type,
+                actorName: email,
+                actorType: "Guest",
                 action: "VALIDATION_FAILED",
-                target: "CHANGE_PASSWORD",
+                target: "SET_PASSWORD",
                 metadata: "Passwords do not match"
             });
 
@@ -230,6 +231,7 @@ router.post("/signup", async (req, res) => {
         }
 
         const hashPass = await argon2.hash(newPass);
+        const hashAns = await argon2.hash(securityAnswer);
 
         const newUser = new User({
             firstName,
@@ -241,7 +243,10 @@ router.post("/signup", async (req, res) => {
             passwordHistory: [hashPass],
 
             //NEW: track last successful password change
-            lastPasswordChange: null
+            lastPasswordChange: Date.now(),
+            failedLoginAttempts: 0,
+            lockUntil: null,
+            securityAnswer: hashAns
         });
 
         await newUser.save();

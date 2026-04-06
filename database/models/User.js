@@ -24,7 +24,7 @@ const PostSchema = new mongoose.Schema({
         default: Date.now
     },
 
-    //account lockout fields
+    /*account lockout fields
     failedLoginAttempts: {
     type: Number,
     default: 0
@@ -32,11 +32,9 @@ const PostSchema = new mongoose.Schema({
     lockUntil: {
         type: Date,
         default: null
-    }
+    },*/
 
-    
-
-
+    securityAnswer: { type: String, default: null }
 })
 
 const User = mongoose.model('User', PostSchema)
