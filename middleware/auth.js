@@ -41,16 +41,25 @@ function createRoleGuard(expectedType, fallbackRedirectPath = "/student-home") {
         }
 
         if (!expectedTypes.includes(req.session.user.type)) {
+            const redirectPath = getHomePathByType(req.session.user.type) || fallbackRedirectPath;
+            const deniedAction = expectedTypes.includes("Admin")
+                ? "UNAUTHORIZED_ADMIN_ACCESS_ATTEMPT"
+                : "ACCESS_DENIED";
+
+            console.warn(
+                `[${deniedAction}] ${req.session.user.email} (${req.session.user.type}) attempted ${req.originalUrl}; redirected to ${redirectPath}`
+            );
+
             //NEW: Add logging for unauthorized role access attempts
             addApplicationLog({
                 actorName: req.session.user.email,
                 actorType: req.session.user.type,
-                action: "ACCESS_DENIED",
+                action: deniedAction,
                 target: req.originalUrl,
-                metadata: "Unauthorized role access attempt"
+                metadata: `Unauthorized role access attempt. Expected role: ${expectedTypes.join(", ")}. Redirected to: ${redirectPath}`
             });
 
-            return res.redirect(getHomePathByType(req.session.user.type) || fallbackRedirectPath);
+            return res.redirect(redirectPath);
         }
         //NEW: Add logging for successful role access
         addApplicationLog({
