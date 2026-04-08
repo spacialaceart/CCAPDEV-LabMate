@@ -14,6 +14,7 @@ const { logSessionState } = require("./middleware/sessionLogger");
 const { deletePastReservations } = require("./services/reservationService");
 const { startReservationCleanupJob } = require("./jobs/reservationCleanup");
 const { seedDatabaseIfEmpty } = require("./database/seedDatabase");
+const { getHomePathByType } = require("./services/sessionService");
 
 const publicRouter = require("./routes/public");
 const studentRouter = require("./routes/student");
@@ -79,6 +80,21 @@ app.use(adminRouter);
 app.use(userApiRouter);
 app.use(reservationApiRouter);
 app.use(laboratoryApiRouter);
+
+app.use((req, res) => {
+    if (req.originalUrl.startsWith("/api/")) {
+        return res.status(404).json({ message: "Not found" });
+    }
+
+    const user = req.session?.user || null;
+    const homePath = user ? getHomePathByType(user.type) : "/";
+
+    return res.status(404).render("404", {
+        user,
+        homePath,
+        missingPath: req.originalUrl
+    });
+});
 
 startReservationCleanupJob(deletePastReservations);
 

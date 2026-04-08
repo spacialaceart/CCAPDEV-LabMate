@@ -2,6 +2,9 @@ const path = require("path");
 const argon2 = require("argon2");
 const User = require("../database/models/User");
 const Reservation = require("../database/models/Reservation");
+const {
+    validateProfileField
+} = require("../utils/profileValidation");
 
 const UPLOADS_DIRECTORY = path.join(__dirname, "..", "public", "uploads");
 
@@ -55,8 +58,27 @@ async function updateUserProfile(userId, body, files) {
         return null;
     }
 
-    user.department = body.department || user.department;
-    user.biography = body.biography || user.biography;
+    const departmentError = validateProfileField(body.department, "department", "Department");
+    if (departmentError) {
+        const error = new Error(departmentError);
+        error.status = 400;
+        throw error;
+    }
+
+    const biographyError = validateProfileField(body.biography, "biography", "Biography");
+    if (biographyError) {
+        const error = new Error(biographyError);
+        error.status = 400;
+        throw error;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(body, "department")) {
+        user.department = body.department.trim();
+    }
+
+    if (Object.prototype.hasOwnProperty.call(body, "biography")) {
+        user.biography = body.biography.trim();
+    }
 
     if (files && files.image) {
         const image = files.image;

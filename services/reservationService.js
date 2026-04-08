@@ -1,6 +1,7 @@
 const Reservation = require("../database/models/Reservation");
 const Laboratory = require("../database/models/Laboratory");
 const User = require("../database/models/User");
+const { addApplicationLog } = require("./applicationLogService");
 const { timeSlots } = require("../database/models/TimeSlotOptions");
 const {
     LAB_DATE_FORMAT_OPTIONS,
@@ -13,6 +14,11 @@ const {
     getReservationDateTime,
     getStatus
 } = require("../utils/time");
+const {
+    isValidReservationDate,
+    parseSeatNumber,
+    validateReservationTimeRange
+} = require("../utils/reservationValidation");
 
 function buildNext7Days() {
     const today = new Date();
@@ -136,13 +142,74 @@ function normalizeReservationDate(date) {
     return reservationDate;
 }
 
+function logReservationValidationFailure(req, target, metadata) {
+    const sessionUser = req.session?.user;
+
+    addApplicationLog({
+        actorName: sessionUser ? `${sessionUser.firstName} ${sessionUser.lastName}` : "Unknown User",
+        actorType: sessionUser?.type || "Unknown",
+        action: "VALIDATION_FAILED",
+        target,
+        metadata
+    });
+}
+
+function buildReservationDateRange(date) {
+    const startDate = new Date(date);
+    startDate.setHours(0, 0, 0, 0);
+
+    const endDate = new Date(date);
+    endDate.setHours(23, 59, 59, 999);
+
+    return { startDate, endDate };
+}
+
+async function hasReservationConflict({ laboratoryRoom, date, seatNumber, startTime, endTime }) {
+    const { startDate, endDate } = buildReservationDateRange(date);
+    const requestedStart = convertTimeToMinutes(startTime);
+    const requestedEnd = convertTimeToMinutes(endTime);
+
+    const existingReservations = await Reservation.find({
+        laboratoryRoom,
+        seatNumber,
+        reservationDate: {
+            $gte: startDate,
+            $lt: endDate
+        }
+    }).select("startTime endTime");
+
+    return existingReservations.some((reservation) =>
+        requestedStart < convertTimeToMinutes(reservation.endTime) &&
+        requestedEnd > convertTimeToMinutes(reservation.startTime)
+    );
+}
+
 async function createReservationAndRedirect(req, res, redirectPath, options = {}) {
     const { includeAnonymous = false } = options;
-    const { labId, date, seatNumber, startTime, endTime, userId, isAnonymous } = req.body;
-    const parsedSeatNumber = parseInt(seatNumber, 10);
+    const { labId, date, seatNumber, startTime, endTime, isAnonymous } = req.body;
+    const parsedSeatNumber = parseSeatNumber(seatNumber);
+    const sessionUserId = req.session?.user?._id;
 
-    if (!labId || !date || !seatNumber || !startTime || !endTime || !userId) {
+    if (!labId || !date || seatNumber === undefined || seatNumber === null || seatNumber === "" || !startTime || !endTime || !sessionUserId) {
+        logReservationValidationFailure(req, "CREATE_RESERVATION", "All fields are required");
         return res.status(400).send("All fields are required");
+    }
+
+    if (!Number.isInteger(parsedSeatNumber) || parsedSeatNumber < 1) {
+        logReservationValidationFailure(req, "CREATE_RESERVATION", "Seat number must be a positive whole number");
+        return res.status(400).send("Seat number must be a positive whole number");
+    }
+
+    if (!isValidReservationDate(date)) {
+        logReservationValidationFailure(req, "CREATE_RESERVATION", "Reservation date is invalid");
+        return res.status(400).send("Reservation date is invalid");
+    }
+
+    const validatedTimeRange = validateReservationTimeRange(startTime, endTime);
+
+    if (!validatedTimeRange.isValid) {
+        logReservationValidationFailure(req, "CREATE_RESERVATION", validatedTimeRange.message);
+        return res.status(400).send(validatedTimeRange.message);
     }
 
     console.log("Creating reservation with data:", req.body);
@@ -154,32 +221,39 @@ async function createReservationAndRedirect(req, res, redirectPath, options = {}
         return res.status(404).send("Laboratory not found");
     }
 
-    const existingReservation = await Reservation.findOne({
-        laboratoryRoom: lab.room,
-        seatNumber: parsedSeatNumber,
-        reservationDate,
-        startTime
-    });
-
-    if (existingReservation) {
-        return res.status(400).send("This seat is already reserved for the selected time");
+    if (parsedSeatNumber > lab.capacity) {
+        logReservationValidationFailure(req, "CREATE_RESERVATION", "Seat number is not valid for the selected laboratory");
+        return res.status(400).send("Seat number is not valid for the selected laboratory");
     }
 
-    const user = await User.findById(userId);
+    const hasConflict = await hasReservationConflict({
+        laboratoryRoom: lab.room,
+        date,
+        seatNumber: parsedSeatNumber,
+        startTime: validatedTimeRange.startTime,
+        endTime: validatedTimeRange.endTime
+    });
+
+    if (hasConflict) {
+        logReservationValidationFailure(req, "CREATE_RESERVATION", "This seat is already reserved for the selected time range");
+        return res.status(400).send("This seat is already reserved for the selected time range");
+    }
+
+    const user = await User.findById(sessionUserId);
 
     if (!user) {
         return res.status(404).send("User not found");
     }
 
     const reservationPayload = {
-        userId,
+        userId: user._id,
         studentName: `${user.firstName} ${user.lastName}`,
         laboratoryRoom: lab.room,
         seatNumber: parsedSeatNumber,
         bookingDate: new Date(),
         reservationDate,
-        startTime,
-        endTime
+        startTime: validatedTimeRange.startTime,
+        endTime: validatedTimeRange.endTime
     };
 
     if (includeAnonymous) {
@@ -228,5 +302,6 @@ module.exports = {
     formatProfileReservation,
     getUpcomingLabSummary,
     createReservationAndRedirect,
-    deletePastReservations
+    deletePastReservations,
+    hasReservationConflict
 };

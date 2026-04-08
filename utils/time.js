@@ -1,31 +1,52 @@
-function convertTimeToMinutes(timeString) {
-    const [time, modifier] = timeString.split(" ");
-    let [hours, minutes] = time.split(":").map(Number);
+function parseTimeString(timeString) {
+    if (typeof timeString !== "string") {
+        return null;
+    }
 
-    if (modifier === "P.M." && hours !== 12) hours += 12;
-    if (modifier === "A.M." && hours === 12) hours = 0;
-
-    return hours * 60 + minutes;
-}
-
-function convertTo24Hour(timeStr) {
-    const match = timeStr.match(/(\d+):(\d+) (\w+\.?\w*)/);
+    const match = timeString.trim().match(/^(\d{1,2}):(\d{2})\s*(A\.?M\.?|P\.?M\.?)$/i);
 
     if (!match) {
         return null;
     }
 
-    let [, hours, minutes, period] = match;
-    hours = Number(hours);
-    minutes = Number(minutes);
+    let hours = Number.parseInt(match[1], 10);
+    const minutes = Number.parseInt(match[2], 10);
+    const modifier = match[3].toUpperCase().replace(/\./g, "");
 
-    if (period.toUpperCase().includes("P") && hours !== 12) {
+    if (
+        !Number.isInteger(hours) ||
+        !Number.isInteger(minutes) ||
+        hours < 1 ||
+        hours > 12 ||
+        (minutes !== 0 && minutes !== 30) ||
+        (modifier !== "AM" && modifier !== "PM")
+    ) {
+        return null;
+    }
+
+    if (modifier === "PM" && hours !== 12) {
         hours += 12;
-    } else if (period.toUpperCase().includes("A") && hours === 12) {
+    }
+
+    if (modifier === "AM" && hours === 12) {
         hours = 0;
     }
 
     return { hours, minutes };
+}
+
+function convertTimeToMinutes(timeString) {
+    const parsedTime = parseTimeString(timeString);
+
+    if (!parsedTime) {
+        return Number.NaN;
+    }
+
+    return parsedTime.hours * 60 + parsedTime.minutes;
+}
+
+function convertTo24Hour(timeStr) {
+    return parseTimeString(timeStr);
 }
 
 function getReservationDateTime(reservationDate, timeString) {
@@ -41,19 +62,20 @@ function getReservationDateTime(reservationDate, timeString) {
 }
 
 function convertToHour(time12h) {
-    const [time, modifier] = time12h.split(" ");
-    let [hours, minutes] = time.split(":");
+    const parsedTime = parseTimeString(time12h);
 
-    if (modifier === "P.M." && hours !== "12") {
-        hours = String(parseInt(hours, 10) + 12);
-    } else if (modifier === "A.M." && hours === "12") {
-        hours = "00";
+    if (!parsedTime) {
+        return null;
     }
 
-    return `${hours}:${minutes}`;
+    return `${String(parsedTime.hours).padStart(2, "0")}:${String(parsedTime.minutes).padStart(2, "0")}`;
 }
 
 function timeToNumber(timeStr) {
+    if (typeof timeStr !== "string") {
+        return Number.NaN;
+    }
+
     return parseInt(timeStr.replace(":", ""), 10);
 }
 
@@ -71,6 +93,10 @@ function getStatus(reservation) {
     const nowHours = now.getHours().toString().padStart(2, "0");
     const nowMinutes = now.getMinutes().toString().padStart(2, "0");
     const nowTime = parseInt(`${nowHours}${nowMinutes}`, 10);
+
+    if (Number.isNaN(startTime) || Number.isNaN(endTime)) {
+        return "Upcoming";
+    }
 
     if (todayDate === reservationDate && nowTime >= startTime && nowTime < endTime) {
         return "Ongoing";

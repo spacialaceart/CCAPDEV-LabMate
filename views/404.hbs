@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <title>LabMate - Page Not Found</title>
+        <link rel="icon" type="image/x-icon" href="/img/favicon.ico">
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <link rel="stylesheet" href="/css/theme-style.css">
+        <link rel="stylesheet" href="/css/navbar-style.css">
+        <style>
+            body {
+                margin: 0;
+                min-height: 100vh;
+                background:
+                    radial-gradient(circle at top, rgba(35, 198, 134, 0.28), transparent 35%),
+                    linear-gradient(180deg, #f4fff9 0%, #eef4f8 100%);
+            }
+
+            .not-found-shell {
+                min-height: calc(100vh - 125px);
+                display: grid;
+                place-items: center;
+                padding: 32px 20px 48px;
+            }
+
+            .not-found-card {
+                width: min(640px, 100%);
+                background: rgba(251, 252, 246, 0.94);
+                border: 1px solid rgba(29, 56, 83, 0.12);
+                border-radius: 24px;
+                box-shadow: 0 24px 60px rgba(29, 56, 83, 0.12);
+                padding: 40px;
+                text-align: center;
+            }
+
+            .not-found-code {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                min-width: 88px;
+                height: 40px;
+                border-radius: 999px;
+                background: var(--dark-blue);
+                color: var(--off-white);
+                font-weight: 700;
+                letter-spacing: 0.08em;
+            }
+
+            .not-found-title {
+                margin: 18px 0 12px;
+                font-size: clamp(2rem, 4vw, 3.4rem);
+                line-height: 1.05;
+            }
+
+            .not-found-copy {
+                margin: 0 auto;
+                max-width: 34rem;
+                color: var(--light-font-color);
+                font-size: 1.05rem;
+                line-height: 1.7;
+            }
+
+            .not-found-path {
+                margin: 22px auto 0;
+                max-width: 100%;
+                padding: 12px 14px;
+                border-radius: 14px;
+                background: rgba(29, 56, 83, 0.08);
+                color: var(--dark-blue);
+                font-family: var(--secondary-font-family);
+                word-break: break-word;
+            }
+
+            .not-found-actions {
+                display: flex;
+                justify-content: center;
+                gap: 14px;
+                flex-wrap: wrap;
+                margin-top: 28px;
+            }
+
+            .not-found-link {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                min-width: 170px;
+                padding: 14px 20px;
+                border-radius: 14px;
+                text-decoration: none;
+                font-weight: 600;
+                transition: transform 0.2s ease, box-shadow 0.2s ease;
+            }
+
+            .not-found-link:hover {
+                transform: translateY(-1px);
+            }
+
+            .not-found-link--primary {
+                background: var(--dark-blue);
+                color: var(--off-white);
+                box-shadow: 0 14px 32px rgba(29, 56, 83, 0.18);
+            }
+
+            .not-found-link--secondary {
+                background: transparent;
+                color: var(--dark-blue);
+                border: 1px solid rgba(29, 56, 83, 0.2);
+            }
+
+            @media (max-width: 640px) {
+                .not-found-card {
+                    padding: 30px 22px;
+                }
+
+                .not-found-link {
+                    width: 100%;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        {{#if user}}
+            {{> navbar}}
+        {{else}}
+            {{> navbar-signedout}}
+        {{/if}}
+
+        <main class="not-found-shell">
+            <section class="not-found-card">
+                <div class="not-found-code">404</div>
+                <h1 class="not-found-title">Page Not Found</h1>
+                <p class="not-found-copy">
+                    The page you requested does not exist or may have been moved. Use the links below to get back to a valid section of LabMate.
+                </p>
+                <div class="not-found-path">{{missingPath}}</div>
+                <div class="not-found-actions">
+                    <a class="not-found-link not-found-link--primary" href="{{homePath}}">Go To Home</a>
+                    <a class="not-found-link not-found-link--secondary" href="javascript:history.back()">Go Back</a>
+                </div>
+            </section>
+        </main>
+    </body>
+</html>

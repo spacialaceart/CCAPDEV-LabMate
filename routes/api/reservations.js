@@ -1,9 +1,27 @@
 const express = require("express");
 const Reservation = require("../../database/models/Reservation");
 const Laboratory = require("../../database/models/Laboratory");
-const { convertTimeToMinutes } = require("../../utils/time");
+const { addApplicationLog } = require("../../services/applicationLogService");
+const {
+    isValidReservationDate,
+    parseSeatNumber,
+    validateReservationTimeRange
+} = require("../../utils/reservationValidation");
+const { hasReservationConflict } = require("../../services/reservationService");
 
 const router = express.Router();
+
+function logValidationFailureForSessionUser(req, target, metadata) {
+    const sessionUser = req.session?.user;
+
+    addApplicationLog({
+        actorName: sessionUser ? `${sessionUser.firstName} ${sessionUser.lastName}` : "Unknown User",
+        actorType: sessionUser?.type || "Unknown",
+        action: "VALIDATION_FAILED",
+        target,
+        metadata
+    });
+}
 
 router.get("/api/reservations", async (req, res) => {
     try {
@@ -45,6 +63,11 @@ router.post("/api/reservation", async (req, res) => {
         await reservation.save();
         res.status(201).json(reservation);
     } catch (error) {
+        if (error.name === "ValidationError") {
+            const message = Object.values(error.errors).map((entry) => entry.message).join(", ");
+            return res.status(400).json({ message });
+        }
+
         res.status(500).json({ message: "Server error", error });
     }
 });
@@ -71,12 +94,21 @@ router.delete("/api/reservation/:id", async (req, res) => {
 
 router.patch("/api/reservation/:id", async (req, res) => {
     try {
-        const reservation = await Reservation.findByIdAndUpdate(req.params.id, { $set: req.body }, { new: true });
+        const reservation = await Reservation.findById(req.params.id);
+
         if (!reservation) {
             return res.status(404).json({ message: "Reservation not found" });
         }
+
+        reservation.set(req.body);
+        await reservation.save();
         res.json(reservation);
     } catch (error) {
+        if (error.name === "ValidationError") {
+            const message = Object.values(error.errors).map((entry) => entry.message).join(", ");
+            return res.status(400).json({ message });
+        }
+
         res.status(500).json({ message: "Server error", error });
     }
 });
@@ -84,12 +116,32 @@ router.patch("/api/reservation/:id", async (req, res) => {
 router.get("/api/reservations/check-availability", async (req, res) => {
     try {
         const { lab, labId, date, seatNumber, startTime, endTime } = req.query;
+        const parsedSeatNumber = parseSeatNumber(seatNumber);
 
-        if ((!lab && !labId) || !date || !seatNumber || !startTime || !endTime) {
+        if ((!lab && !labId) || !date || seatNumber === undefined || seatNumber === null || seatNumber === "" || !startTime || !endTime) {
+            logValidationFailureForSessionUser(req, "RESERVATION_AVAILABILITY_CHECK", "All parameters are required");
             return res.status(400).json({ available: false, message: "All parameters are required" });
         }
 
+        if (!Number.isInteger(parsedSeatNumber) || parsedSeatNumber < 1) {
+            logValidationFailureForSessionUser(req, "RESERVATION_AVAILABILITY_CHECK", "Seat number must be a positive whole number");
+            return res.status(400).json({ available: false, message: "Seat number must be a positive whole number" });
+        }
+
+        if (!isValidReservationDate(date)) {
+            logValidationFailureForSessionUser(req, "RESERVATION_AVAILABILITY_CHECK", "Reservation date is invalid");
+            return res.status(400).json({ available: false, message: "Reservation date is invalid" });
+        }
+
+        const validatedTimeRange = validateReservationTimeRange(startTime, endTime);
+
+        if (!validatedTimeRange.isValid) {
+            logValidationFailureForSessionUser(req, "RESERVATION_AVAILABILITY_CHECK", validatedTimeRange.message);
+            return res.status(400).json({ available: false, message: validatedTimeRange.message });
+        }
+
         let laboratoryRoom = lab;
+        let laboratoryCapacity = null;
 
         if (!laboratoryRoom && labId) {
             const laboratory = await Laboratory.findById(labId);
@@ -99,29 +151,21 @@ router.get("/api/reservations/check-availability", async (req, res) => {
             }
 
             laboratoryRoom = laboratory.room;
+            laboratoryCapacity = laboratory.capacity;
         }
 
-        const reservationStart = new Date(date);
-        reservationStart.setHours(0, 0, 0, 0);
+        if (laboratoryCapacity !== null && parsedSeatNumber > laboratoryCapacity) {
+            logValidationFailureForSessionUser(req, "RESERVATION_AVAILABILITY_CHECK", "Seat number is not valid for the selected laboratory");
+            return res.status(400).json({ available: false, message: "Seat number is not valid for the selected laboratory" });
+        }
 
-        const reservationEnd = new Date(date);
-        reservationEnd.setHours(23, 59, 59, 999);
-
-        const existingReservations = await Reservation.find({
+        const hasConflict = await hasReservationConflict({
             laboratoryRoom,
-            seatNumber: parseInt(seatNumber, 10),
-            reservationDate: {
-                $gte: reservationStart,
-                $lt: reservationEnd
-            }
+            date,
+            seatNumber: parsedSeatNumber,
+            startTime: validatedTimeRange.startTime,
+            endTime: validatedTimeRange.endTime
         });
-
-        const requestedStart = convertTimeToMinutes(startTime);
-        const requestedEnd = convertTimeToMinutes(endTime);
-        const hasConflict = existingReservations.some((reservation) =>
-            requestedStart < convertTimeToMinutes(reservation.endTime) &&
-            requestedEnd > convertTimeToMinutes(reservation.startTime)
-        );
 
         if (hasConflict) {
             return res.json({ available: false, message: "This seat is already reserved for the selected time range" });

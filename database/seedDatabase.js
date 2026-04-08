@@ -18,7 +18,10 @@ async function hashSeedUsers(users) {
     return Promise.all(
         users.map(async (user) => ({
             ...user,
-            password: await argon2.hash(user.password)
+            password: await argon2.hash(user.password),
+            securityAnswer: user.securityAnswer
+                ? await argon2.hash(user.securityAnswer)
+                : null
         }))
     );
 }

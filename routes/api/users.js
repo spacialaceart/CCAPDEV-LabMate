@@ -50,6 +50,18 @@ function validatePassword(newPass) {
 
 const router = express.Router();
 
+function logValidationFailureForSessionUser(req, target, metadata) {
+    const sessionUser = req.session?.user;
+
+    addApplicationLog({
+        actorName: sessionUser ? `${sessionUser.firstName} ${sessionUser.lastName}` : "Unknown User",
+        actorType: sessionUser?.type || "Unknown",
+        action: "VALIDATION_FAILED",
+        target,
+        metadata
+    });
+}
+
 router.get("/api/session", (req, res) => {
     if (req.session && req.session.user) {
         res.json({ user: req.session.user });
@@ -117,7 +129,28 @@ router.put("/api/user/update", isAuth, async (req, res) => {
         });
     } catch (error) {
         console.error(`Error updating user: ${error.message}`);
-        res.status(500).json({ message: "Server error", error: error.message });
+
+        if (error.name === "ValidationError") {
+            const message = Object.values(error.errors).map((entry) => entry.message).join(", ");
+
+            logValidationFailureForSessionUser(req, "PROFILE_UPDATE", message);
+
+            return res.status(400).json({
+                success: false,
+                message,
+                error: message
+            });
+        }
+
+        if (error.status === 400) {
+            logValidationFailureForSessionUser(req, "PROFILE_UPDATE", error.message);
+        }
+
+        res.status(error.status || 500).json({
+            success: false,
+            message: error.status ? error.message : "Server error",
+            error: error.message
+        });
     }
 });
 

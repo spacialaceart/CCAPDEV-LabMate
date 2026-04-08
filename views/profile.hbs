@@ -185,14 +185,16 @@
                         <li>
                             <div class="form-group">
                                 <label for="department">Department</label>
-                                <input type="text" id="department" name="department" value="{{user.department}}">
+                                <input type="text" id="department" name="department" value="{{user.department}}" maxlength="{{profileFieldLimits.department}}" required>
+                                <small>{{profileFieldLimits.department}} characters maximum.</small>
                             </div>
                         </li>
 
                         <li>
                             <div class="form-group">
                                 <label for="biography">Biography</label>
-                                <textarea id="biography" name="biography" rows="4">{{user.biography}}</textarea>
+                                <textarea id="biography" name="biography" rows="4" maxlength="{{profileFieldLimits.biography}}">{{user.biography}}</textarea>
+                                <small>{{profileFieldLimits.biography}} characters maximum.</small>
                             </div>
                         </li>
 
@@ -358,9 +360,17 @@
         document.getElementById("profile-edit-form").addEventListener("submit", function(event) {
             event.preventDefault();
 
+            const departmentValue = document.getElementById("department").value.trim();
+            const biographyValue = document.getElementById("biography").value.trim();
+
+            if (!departmentValue) {
+                alert("Please fill in all required fields.");
+                return;
+            }
+
             const formData = new FormData();
-            formData.append("department", document.getElementById("department").value);
-            formData.append("biography", document.getElementById("biography").value);
+            formData.append("department", departmentValue);
+            formData.append("biography", biographyValue);
             if (selectedImage) {
                 formData.append("image", selectedImage);
             }
@@ -375,7 +385,7 @@
                     alert("Profile updated successfully!");
                     location.reload();
                 } else {
-                    alert("Failed to update profile. Please try again.");
+                    alert(data.message || "Failed to update profile. Please try again.");
                 }
             })
             .catch((error) => {

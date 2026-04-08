@@ -102,6 +102,14 @@ router.post("/signin", async (req, res) => {
         const user = await User.findOne({ email });
 
         if (!user) {
+            addApplicationLog({
+                actorName: email,
+                actorType: "Guest",
+                action: "SIGN_IN_FAILED",
+                target: "SIGN_IN",
+                metadata: "Attempted sign-in with a nonexistent account"
+            });
+
             return res.status(401).json({ error: "Invalid username and/or password." }); 
         }
 

@@ -1,4 +1,5 @@
 const { PROFILE_SECTION_HASHES } = require("../config/pageConfigs");
+const { PROFILE_FIELD_LIMITS } = require("../utils/profileValidation");
 const { destroySession, refreshSessionUser } = require("./sessionService");
 const {
     getLaboratoryPageData,
@@ -78,7 +79,8 @@ async function renderProfilePage(req, res, reservationQuery) {
     res.render("profile", {
         upcomingLab: getUpcomingLabSummary(reservations),
         reservations: reservations.map(formatProfileReservation),
-        user: req.session.user
+        user: req.session.user,
+        profileFieldLimits: PROFILE_FIELD_LIMITS
     });
 }
 

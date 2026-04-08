@@ -33,11 +33,15 @@ async function ensureAdminAccount() {
     }
 
     const defaultAdminPassword = await argon2.hash(defaultAdminSeed.password);
-    const { password, ...defaultAdminProfile } = defaultAdminSeed;
+    const defaultAdminSecurityAnswer = defaultAdminSeed.securityAnswer
+        ? await argon2.hash(defaultAdminSeed.securityAnswer)
+        : null;
+    const { password, securityAnswer, ...defaultAdminProfile } = defaultAdminSeed;
 
     await User.create({
         ...defaultAdminProfile,
-        password: defaultAdminPassword
+        password: defaultAdminPassword,
+        securityAnswer: defaultAdminSecurityAnswer
     });
 
     console.log(`Created default Administrator account (${defaultAdminSeed.email}).`);
